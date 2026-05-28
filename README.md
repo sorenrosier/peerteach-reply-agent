@@ -1,6 +1,15 @@
 # PeerTeach Reply Agent
 
-AI-powered cold email reply agent for PeerTeach. Receives Instantly.ai webhooks, classifies prospect replies with Claude, and routes them: auto-handles soft/hard nos and OOO, posts human-in-the-loop drafts to Slack for interested replies, and escalates anything ambiguous.
+AI-powered cold email reply agent for PeerTeach. Receives [Instantly.ai](https://instantly.ai) webhooks when prospects reply, classifies the reply with Claude, fetches real calendar availability from GoHighLevel, generates a draft response, and posts it to Slack for one-click human approval before anything is sent.
+
+## How it works
+
+1. Prospect replies to a cold email → Instantly fires a webhook
+2. Claude classifies the reply (scheduling, soft yes, referral, soft no, hard no, OOO, etc.)
+3. For scheduling replies, live free slots are fetched from GHL calendar
+4. Claude drafts a reply using those exact slots
+5. Draft is posted to Slack with **Send / Edit & Send / Skip** buttons
+6. A human approves — only then does the reply go out
 
 ## Architecture
 
@@ -81,11 +90,16 @@ curl -X POST https://YOUR-DEPLOYMENT.vercel.app/api/webhook \
 
 | Classification | Action |
 |---|---|
-| `OOO` | Log only — Instantly handles natively |
-| `HARD_NO` | Mark `not_interested` in Instantly + Slack notification |
-| `SOFT_NO` | Mark `not_interested` + auto-send polite farewell + Slack log |
+| `OOO` | Log only — no action |
+| `HARD_NO` | Slack notification — sequence stopped |
+| `SOFT_NO` | Generate polite farewell → Slack for human approval |
 | `ESCALATE` | Slack alert with full context — no auto-action |
-| `SCHEDULING`, `SOFT_YES`, `REFERRED`, `WRONG_PERSON` | Generate draft reply, post to Slack with Send/Edit/Skip buttons |
+| `WRONG_PERSON` | Escalate to human — too complex to auto-handle |
+| `REFERRED` (with email) | Escalate to human — handle the intro manually |
+| `REFERRED` (no email) | Generate draft asking for contact details → Slack approval |
+| `SCHEDULING` | Fetch live GHL slots → draft with 2 real times → Slack approval |
+| `SOFT_YES` | Generate answer + Zoom pitch → Slack approval |
+| `NO_REPLY` | Silent — conversation is naturally closed, no response needed |
 
 If `AUTO_BOOK_ENABLED=true` and classification is `SCHEDULING`, the dormant GHL branch attempts to auto-book a Zoom and reply with the booked time. On any failure, escalates to human.
 
