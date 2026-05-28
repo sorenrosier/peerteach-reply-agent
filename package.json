@@ -1,0 +1,22 @@
+{
+  "name": "peerteach-reply-agent",
+  "version": "1.0.0",
+  "description": "AI reply agent for PeerTeach cold email outreach",
+  "private": true,
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test:webhook": "ts-node scripts/testWebhook.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@slack/web-api": "^7.0.0",
+    "@vercel/node": "^3.0.0",
+    "axios": "^1.6.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "",
+  "outputDirectory": ".",
+  "functions": {
+    "api/webhook.ts": { "maxDuration": 30 },
+    "api/slack-action.ts": { "maxDuration": 10 }
+  }
+}
