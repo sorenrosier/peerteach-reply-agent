@@ -3,7 +3,7 @@ import { env } from './env';
 import { getAvailableTimes, bookMeeting } from './calendly';
 import { InstantlyWebhookPayload } from './types';
 
-const MODEL = 'claude-sonnet-4-5-20251022';
+const MODEL = 'claude-sonnet-4-6';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -45,8 +45,16 @@ const TOOLS: Anthropic.Tool[] = [
           type: 'string',
           description: 'End of range in ISO UTC format, max 7 days after start_time',
         },
+        timezone: {
+          type: 'string',
+          description: 'IANA timezone to format results in, based on prospect location (e.g. America/New_York, America/Chicago, America/Denver, America/Los_Angeles)',
+        },
+        requested_time: {
+          type: 'string',
+          description: 'Optional: ISO UTC time the prospect requested (e.g. "2026-06-05T19:00:00Z"). If provided, the tool will confirm if it is available or return the 2 closest alternatives.',
+        },
       },
-      required: ['start_time', 'end_time'],
+      required: ['start_time', 'end_time', 'timezone'],
     },
   },
   {
@@ -170,51 +178,83 @@ SCHOOL YEAR CONTEXT:
 It is early June 2026, end of the school year. Many administrators are wrapping up the year.
 If scheduling feels hard now, the summer is a good time to plan ahead for next year.
 
+OUTPUT RULES (most important):
+- Output ONLY the final reply text, nothing else
+- Never include reasoning, notes, self-corrections, or thought process
+- Never show "Note:", "Draft:", "Corrected:", dashes separating versions, or any meta-commentary
+- Fix mistakes silently and output only the clean final reply
+- The text you output goes directly into an email — it must be ready to send
+
 VOICE RULES (non-negotiable):
 - Write like a real person on a small team, not a vendor
 - Short sentences. Get to the point.
-- Always start with "Hi [prospect first name],"
+- Every reply MUST start with "Hi [prospect first name]," on its own line — no exceptions, including soft nos, referrals, wrong person, and all other cases
 - Never start by restating what they said
 - Never use em dashes (use comma or period instead)
 - Never use: "truly", "greatly", "deeply", "absolutely", "certainly", "excited"
 - No bullet points ever
-- Max 80 words total (not counting signature)
+- Max 80 words total (not counting signature) — count carefully
 - End with exactly one question or one clear next step
 
-TOOL USAGE RULES:
+TIMEZONE INFERENCE:
+Before calling get_available_times or book_meeting, determine the prospect's timezone:
+- California, Oregon, Washington → America/Los_Angeles
+- Texas, Oklahoma, Kansas → America/Chicago
+- Mountain states (CO, AZ, NM, UT, MT, ID) → America/Denver
+- Midwest (IL, WI, MN, MO, OH, MI, IN, IA) → America/Chicago
+- East Coast, Southeast, Northeast → America/New_York
+- Default to America/New_York if unknown
 
 get_available_times:
 - Call this EVERY time you need to mention specific meeting times
-- Call it for the relevant date range based on what the prospect said
-  ("next week" → start=next Monday, end=next Friday)
-  ("2 weeks from now" → start/end 2 weeks out)
-  ("today" → today's remaining hours)
-  ("any time" → next 2 weekdays)
-- After getting slots, pick 2 that are spread apart (different days preferred)
-- Only propose times that actually appear in the results — never make up times
-- Always include timezone when mentioning times
+- Use the date range matching what the prospect said:
+  "next week" → next Monday to next Friday
+  "2 weeks from now" → 14 days out, 5-day window
+  "today" → now to end of today
+  no preference → now to 5 days from now
+- The tool returns pre-selected times in "suggested_times" — use those exact times, do not pick different ones
+- Always include the timezone abbreviation shown in the formatted time (EDT, CDT, PDT, etc.)
+- If the prospect requested a specific time, pass it as requested_time in ISO UTC format — the tool will confirm if it's available or return the 2 closest alternatives
+- If requested_time_available is true, confirm that time directly. If false, propose the suggested alternatives naturally without mentioning the original time was unavailable
 
 book_meeting:
-- Only call when prospect explicitly confirmed ("Yes, that works", "Let's do Thursday at 2")
-- After booking, draft a short confirmation: "Booked — calendar invite is on its way."
-- Include reschedule link if available
+- Only call when prospect EXPLICITLY confirmed a specific time ("Yes, Thursday 2pm works", "That's perfect")
+- After booking, draft: "Booked — calendar invite is on its way." then include reschedule link on next line
 
 no_reply:
-- Use for: "Thanks!", "Sounds good", OOO auto-replies, natural conversation endings
-- Do NOT reply to every message — know when the conversation is done
+- Use ONLY for: OOO auto-replies, simple "Thanks!" or "Looking forward to it!" messages where the thread is clearly done
+- If the thread already has a confirmed booking AND the latest message is just an acknowledgment ("Great!", "Thanks!", "See you then"), use no_reply — do NOT book again
+- Do NOT use for soft nos — those need a warm farewell reply
 
 hard_no:
-- Use for explicit unsubscribe/remove requests only
+- Use ONLY when prospect explicitly says remove me, unsubscribe, stop emailing
+
+SITUATION HANDLING:
+
+Soft no (not interested, not now, too busy, already have something):
+- Draft a brief warm reply acknowledging their decision, leaving the door open
+- Keep it one or two sentences: "Totally understand. Hope the rest of the year goes well — feel free to reach out if anything changes."
+
+Wrong person (they don't handle curriculum/instructional decisions):
+- Draft a one-sentence reply asking who the right contact is
+- "Sorry for the confusion — do you know who handles math curriculum or instructional programs at the school?"
+- Never escalate just because it's the wrong person
+
+Referral with name only (no email):
+- Draft a reply asking for the contact's direct email
+- "Thanks for the heads up — do you happen to have [name]'s direct email so I can reach out?"
+- Never escalate for name-only referrals
+
+Referral with direct email address:
+- Call escalate — a human needs to handle this intro personally
 
 escalate:
-- Wrong person situations
-- Forwarding you to someone else (give their contact info to the human)
-- Legal threats or hostile replies
-- District-level bureaucracy requiring special handling
-- Anything you are not confident handling
+- Referrals where a direct email address was given
+- Angry, threatening, or legal language
+- Situations genuinely too complex or ambiguous
 
-REMEMBER: You have access to the full email thread. Use all prior context to make smart decisions.
-Never propose times you haven't verified with get_available_times.`;
+REMEMBER: You have access to the full email thread. Use all prior context.
+Never propose times you have not verified with get_available_times.`;
 }
 
 function buildContext(payload: InstantlyWebhookPayload, thread: ThreadEmail[]): string {
@@ -247,32 +287,113 @@ function buildContext(payload: InstantlyWebhookPayload, thread: ThreadEmail[]): 
   return ctx;
 }
 
+function pickTwoSlots(
+  slots: Array<{ startTime: string }>,
+): Array<{ startTime: string }> {
+  if (slots.length === 0) return [];
+  if (slots.length === 1) return [slots[0]];
+
+  // Group by calendar date (UTC day)
+  const byDay = new Map<string, Array<{ startTime: string }>>();
+  for (const s of slots) {
+    const day = s.startTime.slice(0, 10);
+    if (!byDay.has(day)) byDay.set(day, []);
+    byDay.get(day)!.push(s);
+  }
+
+  const days = [...byDay.values()];
+
+  // Prefer one from first available day, one from a different day
+  if (days.length >= 2) {
+    const first = days[0];
+    const second = days[Math.min(1, days.length - 1)];
+    return [
+      first[Math.floor(first.length / 2)],
+      second[Math.floor(second.length / 2)],
+    ];
+  }
+
+  // Same day — pick two slots 3+ hours apart
+  const day = days[0];
+  const a = day[0];
+  const THREE_HOURS = 3 * 60 * 60 * 1000;
+  const b = day.find(
+    (s) => new Date(s.startTime).getTime() - new Date(a.startTime).getTime() >= THREE_HOURS,
+  ) ?? day[day.length - 1];
+  return [a, b];
+}
+
+export interface AgentMocks {
+  getAvailableTimes?: typeof getAvailableTimes;
+  bookMeeting?: typeof bookMeeting;
+}
+
 async function executeToolWithRetry(
   name: string,
   input: Record<string, any>,
   attempt = 0,
+  mocks: AgentMocks = {},
 ): Promise<{ data?: any; specialAction?: AgentResult }> {
   try {
     if (name === 'get_available_times') {
-      const slots = await getAvailableTimes(input.start_time, input.end_time);
-      const formatted = slots.map((s) => {
-        const dt = new Intl.DateTimeFormat('en-US', {
-          weekday: 'long',
-          month: 'long',
-          day: 'numeric',
-          hour: 'numeric',
-          minute: '2-digit',
-          timeZoneName: 'short',
-          timeZone: 'America/New_York',
-        }).format(new Date(s.startTime));
-        return { startTime: s.startTime, formatted: dt };
+      const tz = (input.timezone as string) || 'America/New_York';
+      const fn = mocks.getAvailableTimes ?? getAvailableTimes;
+      const slots = await fn(input.start_time, input.end_time);
+      const formatter = new Intl.DateTimeFormat('en-US', {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+        timeZoneName: 'short',
+        timeZone: tz,
       });
-      console.log(`[agent] get_available_times returned ${formatted.length} slots`);
-      return { data: { slots: formatted, count: formatted.length } };
+
+      // If a specific time was requested, check if it's available or find closest alternatives.
+      // Otherwise pick 2 spread-apart slots.
+      let picked: Array<{ startTime: string }>;
+      let requestedAvailable = false;
+      const requestedTime = input.requested_time as string | undefined;
+
+      if (requestedTime) {
+        const reqMs = new Date(requestedTime).getTime();
+        const exact = slots.find((s) => Math.abs(new Date(s.startTime).getTime() - reqMs) < 60 * 1000);
+        if (exact) {
+          picked = [exact];
+          requestedAvailable = true;
+        } else {
+          // Find 2 closest slots to the requested time
+          const sorted = [...slots].sort(
+            (a, b) =>
+              Math.abs(new Date(a.startTime).getTime() - reqMs) -
+              Math.abs(new Date(b.startTime).getTime() - reqMs),
+          );
+          picked = sorted.slice(0, 2);
+        }
+      } else {
+        picked = pickTwoSlots(slots);
+      }
+
+      const suggested = picked.map((s) => ({
+        startTime: s.startTime,
+        formatted: formatter.format(new Date(s.startTime)),
+      }));
+
+      console.log(`[agent] get_available_times returned ${slots.length} slots, suggesting: ${suggested.map(s => s.formatted).join(' | ')}`);
+      return {
+        data: {
+          requested_time_available: requestedAvailable,
+          suggested_times: suggested,
+          instruction: requestedAvailable
+            ? 'The requested time is available. Confirm it.'
+            : 'Use exactly these suggested times in your reply. Do not pick different times.',
+        },
+      };
     }
 
     if (name === 'book_meeting') {
-      const booking = await bookMeeting({
+      const fn = mocks.bookMeeting ?? bookMeeting;
+      const booking = await fn({
         startTime: input.start_time,
         name: input.name,
         email: input.email,
@@ -310,7 +431,7 @@ async function executeToolWithRetry(
     console.error(`[agent] tool ${name} failed (attempt ${attempt}):`, msg);
     if (attempt < 2) {
       await sleep(500 * Math.pow(2, attempt));
-      return executeToolWithRetry(name, input, attempt + 1);
+      return executeToolWithRetry(name, input, attempt + 1, mocks);
     }
     return { data: { error: msg } };
   }
@@ -319,6 +440,7 @@ async function executeToolWithRetry(
 export async function runAgent(
   payload: InstantlyWebhookPayload,
   thread: ThreadEmail[],
+  mocks: AgentMocks = {},
 ): Promise<AgentResult> {
   const client = new Anthropic({ apiKey: env('ANTHROPIC_API_KEY') });
 
@@ -347,12 +469,16 @@ export async function runAgent(
       const text = textBlock && textBlock.type === 'text' ? textBlock.text.trim() : '';
       if (!text || text.toUpperCase() === 'NONE') return { action: 'no_reply' };
 
-      const cleaned = text
+      let cleaned = text
         .replace(/^```(?:\w+)?\s*/i, '')
         .replace(/```$/i, '')
         .replace(/—/g, ',')
         .replace(/–/g, ',')
         .trim();
+
+      // Strip any reasoning that leaked before "Hi [name],"
+      const hiIndex = cleaned.search(/^Hi\s+\w/m);
+      if (hiIndex > 0) cleaned = cleaned.slice(hiIndex).trim();
 
       return {
         action: 'draft',
@@ -370,7 +496,7 @@ export async function runAgent(
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
 
       for (const block of toolUseBlocks) {
-        const result = await executeToolWithRetry(block.name, block.input as Record<string, any>);
+        const result = await executeToolWithRetry(block.name, block.input as Record<string, any>, 0, mocks);
 
         if (result.specialAction) {
           return result.specialAction;
