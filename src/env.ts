@@ -16,6 +16,9 @@ const OPTIONAL_VARS = [
   'WEBHOOK_SECRET',
   'AUTO_BOOK_ENABLED',
   'BASE_URL',
+  'CALENDLY_API_KEY',
+  'CALENDLY_EVENT_TYPE_URI',
+  'CALENDLY_LOCATION_URL',
 ] as const;
 
 type RequiredVar = (typeof REQUIRED_VARS)[number];

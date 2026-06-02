@@ -1,10 +1,10 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
-import { validateEnv, envOptional } from '../src/env';
-import { getFreeSlots, upsertContact, createAppointment } from '../src/ghl';
+import { validateEnv } from '../src/env';
+import { listEventTypes, getAvailableTimes, bookMeeting } from '../src/calendly';
 
 // GET /api/test-autobook
-// Runs the full GHL auto-book flow with dummy data and returns results as JSON.
-// Creates a real appointment in GHL — delete it manually afterward.
+// Runs the full Calendly flow: list event types, fetch slots, book a test appointment.
+// Creates a real booking — delete it from Calendly afterward.
 export default async function handler(
   req: VercelRequest,
   res: VercelResponse,
@@ -16,62 +16,47 @@ export default async function handler(
     return;
   }
 
-  const calendarId = envOptional('GHL_CALENDAR_ID');
-  const locationId = envOptional('GHL_LOCATION_ID');
-
-  if (!calendarId || !locationId) {
-    res.status(400).json({ error: 'GHL_CALENDAR_ID and GHL_LOCATION_ID must be set' });
+  if (!process.env.CALENDLY_API_KEY) {
+    res.status(400).json({ error: 'CALENDLY_API_KEY not set' });
     return;
   }
 
   const log: Record<string, any> = {};
 
   try {
-    // Step 1: Fetch free slots
+    // Step 1: List event types (helps find CALENDLY_EVENT_TYPE_URI)
+    const eventTypes = await listEventTypes();
+    log.eventTypes = eventTypes.map((e) => ({ name: e.name, uri: e.uri, slug: e.slug }));
+
+    if (!process.env.CALENDLY_EVENT_TYPE_URI) {
+      res.status(200).json({
+        ok: false,
+        reason: 'CALENDLY_EVENT_TYPE_URI not set — copy the uri from eventTypes below and set it',
+        log,
+      });
+      return;
+    }
+
+    // Step 2: Fetch available times for next 7 days
     const now = new Date();
-    const end = new Date(now.getTime() + 2 * 24 * 60 * 60 * 1000);
-    const slots = await getFreeSlots({
-      calendarId,
-      startDate: now.toISOString(),
-      endDate: end.toISOString(),
-      timezone: 'America/New_York',
-    });
+    const end = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+    const slots = await getAvailableTimes(now.toISOString(), end.toISOString());
     log.slotsFound = slots.length;
     log.firstSlot = slots[0] ?? null;
 
     if (slots.length === 0) {
-      res.status(200).json({ ok: false, reason: 'No free slots found', log });
+      res.status(200).json({ ok: false, reason: 'No available slots found', log });
       return;
     }
 
-    const chosen = slots[0];
-    log.chosenSlot = chosen;
-
-    // Step 2: Upsert test contact
-    const contactId = await upsertContact({
+    // Step 3: Book the first available slot with test data
+    const booking = await bookMeeting({
+      startTime: slots[0].startTime,
+      name: 'AutoBook Test',
       email: 'autobook-test@peerteach-test.com',
-      firstName: 'AutoBook',
-      lastName: 'Test',
-      locationId,
-      customFields: {
-        instantly_campaign: 'test-autobook',
-        school: 'Test School',
-        role: 'Principal',
-      },
+      timezone: 'America/New_York',
     });
-    log.contactId = contactId;
-
-    // Step 3: Create appointment
-    const appointmentId = await createAppointment({
-      calendarId,
-      locationId,
-      contactId,
-      startTime: chosen.startTime,
-      endTime: chosen.endTime,
-      title: 'PeerTeach intro — AutoBook Test',
-      notes: 'Created by /api/test-autobook. Safe to delete.',
-    });
-    log.appointmentId = appointmentId;
+    log.booking = booking;
 
     res.status(200).json({ ok: true, log });
   } catch (err) {

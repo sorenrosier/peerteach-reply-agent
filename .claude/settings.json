@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__mcp-server-firecrawl__firecrawl_search",
+      "mcp__mcp-server-firecrawl__firecrawl_scrape",
+      "mcp__mcp-server-firecrawl__firecrawl_search_feedback",
+      "mcp__mcp-server-firecrawl__firecrawl_extract",
+      "mcp__mcp-server-firecrawl__firecrawl_map"
+    ]
+  }
+}

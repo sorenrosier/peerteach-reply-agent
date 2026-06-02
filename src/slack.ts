@@ -2,6 +2,7 @@ import { WebClient } from '@slack/web-api';
 import axios from 'axios';
 import { env, envOptional } from './env';
 import {
+  AgentResult,
   ClassificationResult,
   InstantlyWebhookPayload,
   ReplyClassification,
@@ -311,6 +312,85 @@ export async function postErrorNotification(
     { type: 'actions', elements: [uniboxButton(payload)] },
   ];
   await postMessage(blocks, `Reply agent error: ${context}`);
+}
+
+// Posts an agent-generated draft for human approval.
+export async function postAgentDraft(
+  payload: InstantlyWebhookPayload,
+  result: AgentResult,
+): Promise<void> {
+  const draft = result.draft ?? '';
+  const header = result.booked
+    ? ':white_check_mark: Meeting booked — confirm reply'
+    : ':pencil2: Draft reply — needs approval';
+
+  const buttonValue: SendReplyButtonValue = {
+    email_id: payload.email_id,
+    eaccount: payload.email_account,
+    subject: replySubject(payload.reply_subject || payload.email_subject || ''),
+    body_text: draft,
+    lead_email: payload.lead_email,
+    campaign_id: payload.campaign_id,
+  };
+  const valueStr = JSON.stringify(buttonValue);
+  let finalValue = valueStr;
+  if (valueStr.length > 1900) {
+    const overhead = valueStr.length - buttonValue.body_text.length;
+    const room = 1900 - overhead - 20;
+    finalValue = JSON.stringify({ ...buttonValue, body_text: buttonValue.body_text.slice(0, Math.max(0, room)) });
+  }
+  const skipValue = JSON.stringify({
+    email_id: payload.email_id,
+    lead_email: payload.lead_email,
+    campaign_id: payload.campaign_id,
+  });
+
+  const blocks: any[] = [
+    { type: 'header', text: { type: 'plain_text', text: header, emoji: true } },
+    { type: 'section', text: { type: 'mrkdwn', text: prospectSummary(payload) } },
+    {
+      type: 'section',
+      text: { type: 'mrkdwn', text: `*Draft reply (from ${payload.email_account}):*\n${quoteBlock(draft, 2500)}` },
+    },
+    ...(result.booked && result.bookingDetails ? [{
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: `:calendar: Booked for *${result.bookingDetails.startTime}*${result.bookingDetails.rescheduleUrl ? ` · <${result.bookingDetails.rescheduleUrl}|Reschedule link>` : ''}` }],
+    }] : []),
+    {
+      type: 'section',
+      text: { type: 'mrkdwn', text: `*Their reply:*\n${quoteBlock(payload.reply_text || payload.reply_text_snippet || '')}` },
+    },
+    {
+      type: 'actions',
+      block_id: 'reply_actions',
+      elements: [
+        {
+          type: 'button',
+          style: 'primary',
+          text: { type: 'plain_text', text: ':white_check_mark: Send Reply', emoji: true },
+          action_id: 'send_reply',
+          value: finalValue,
+        },
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: ':pencil2: Edit & Send', emoji: true },
+          action_id: 'edit_send',
+          value: skipValue,
+          url: payload.unibox_url,
+        },
+        {
+          type: 'button',
+          style: 'danger',
+          text: { type: 'plain_text', text: ':x: Skip', emoji: true },
+          action_id: 'skip',
+          value: skipValue,
+        },
+        uniboxButton(payload),
+      ],
+    },
+  ];
+
+  await postMessage(blocks, `${header} from ${payload.lead_email}`);
 }
 
 // Update an existing message via response_url (used by slack-action handler).

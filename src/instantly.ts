@@ -157,6 +157,47 @@ export async function updateLeadVariables(
   });
 }
 
+export interface ThreadEmail {
+  body: string;
+  timestamp: string;
+  isOutbound: boolean;
+}
+
+// Fetches the email thread for a lead. Falls back to empty array on any error.
+export async function fetchEmailThread(
+  campaignId: string,
+  leadEmail: string,
+): Promise<ThreadEmail[]> {
+  try {
+    const res = await instantlyRequest<{ items?: any[]; data?: any[] }>({
+      method: 'GET',
+      url: '/emails',
+      params: {
+        campaign_id: campaignId,
+        email: leadEmail,
+        limit: 20,
+      },
+    });
+    const items: any[] = res.items ?? res.data ?? [];
+    const emails = items
+      .map((e: any) => ({
+        body: (e.body?.text ?? e.text ?? e.reply_text ?? e.email_text ?? '').trim(),
+        timestamp: e.timestamp ?? e.created_at ?? e.date_created ?? '',
+        isOutbound: !!(e.is_sent ?? e.is_outbound ?? false),
+      }))
+      .filter((e) => e.body.length > 0)
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    console.log(`[instantly] fetchEmailThread: ${emails.length} emails for ${leadEmail}`);
+    return emails;
+  } catch (err) {
+    console.warn(
+      '[instantly] fetchEmailThread failed, proceeding without thread:',
+      err instanceof Error ? err.message : String(err),
+    );
+    return [];
+  }
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')

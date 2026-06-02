@@ -9,6 +9,21 @@ export type ReplyClassification =
   | 'NO_REPLY'
   | 'ESCALATE';
 
+export type AgentAction = 'draft' | 'no_reply' | 'hard_no' | 'ooo' | 'escalate';
+
+export interface AgentResult {
+  action: AgentAction;
+  draft?: string;
+  booked?: boolean;
+  bookingDetails?: {
+    startTime: string;
+    rescheduleUrl?: string;
+    cancelUrl?: string;
+  };
+  returnDate?: string;
+  reason?: string;
+}
+
 export interface InstantlyWebhookPayload {
   timestamp: string;
   event_type: string;
