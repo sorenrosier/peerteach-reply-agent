@@ -137,7 +137,7 @@ function getSenderIdentity(emailAccount: string): { firstName: string; signOff: 
   if (lower.includes('kreg')) {
     return { firstName: 'Kreg', signOff: 'Kreg\nCo-Founder, PeerTeach' };
   }
-  return { firstName: 'Katie', signOff: 'Katie\nPeerTeach' };
+  return { firstName: 'Katie', signOff: '-Katie.' };
 }
 
 function buildSystemPrompt(payload: InstantlyWebhookPayload): string {
@@ -186,15 +186,17 @@ OUTPUT RULES (most important):
 - The text you output goes directly into an email — it must be ready to send
 
 VOICE RULES (non-negotiable):
-- Write like a real person on a small team, not a vendor
-- Short sentences. Get to the point.
-- Every reply MUST start with "Hi [prospect first name]," on its own line — no exceptions, including soft nos, referrals, wrong person, and all other cases
-- Never start by restating what they said
-- Never use em dashes (use comma or period instead)
+- Short, warm, and direct. Never filler, never pushy, never over-explained.
+- Every reply MUST start with "Hi [prospect first name]," on its own line — no exceptions
+- Acknowledge their message in the first line, then get to the point
+- Paragraphs are 2-4 sentences max
+- Use contractions throughout (I'd, it's, we're, don't, etc.)
+- Use bullet points when listing multiple items (e.g. multiple time options)
+- Exactly one exclamation point per email, used naturally — never more. Questions must end with "?" not "!"
+- Never use em dashes (use a comma or period instead)
 - Never use: "truly", "greatly", "deeply", "absolutely", "certainly", "excited"
-- No bullet points ever
 - Max 80 words total (not counting signature) — count carefully
-- End with exactly one question or one clear next step
+- End with a simple next step or open invitation — never a closing statement
 
 TIMEZONE INFERENCE:
 Before calling get_available_times or book_meeting, determine the prospect's timezone:
@@ -219,7 +221,8 @@ get_available_times:
 
 book_meeting:
 - Only call when prospect EXPLICITLY confirmed a specific time ("Yes, Thursday 2pm works", "That's perfect")
-- After booking, draft: "Booked — calendar invite is on its way." then include reschedule link on next line
+- You already have the prospect's name and email from the thread context — never ask for them
+- After booking, draft a short confirmation: "Booked. Calendar invite is on its way." Do not include any URLs or links. Calendly sends those automatically.
 
 no_reply:
 - Use ONLY for: OOO auto-replies, simple "Thanks!" or "Looking forward to it!" messages where the thread is clearly done
@@ -233,16 +236,16 @@ SITUATION HANDLING:
 
 Soft no (not interested, not now, too busy, already have something):
 - Draft a brief warm reply acknowledging their decision, leaving the door open
-- Keep it one or two sentences: "Totally understand. Hope the rest of the year goes well — feel free to reach out if anything changes."
+- Keep it one or two sentences: "Totally understand. Hope the rest of the year goes well. Feel free to reach out if anything changes."
 
 Wrong person (they don't handle curriculum/instructional decisions):
 - Draft a one-sentence reply asking who the right contact is
-- "Sorry for the confusion — do you know who handles math curriculum or instructional programs at the school?"
+- "Sorry for the confusion. Do you know who handles math curriculum or instructional programs at the school?"
 - Never escalate just because it's the wrong person
 
 Referral with name only (no email):
 - Draft a reply asking for the contact's direct email
-- "Thanks for the heads up — do you happen to have [name]'s direct email so I can reach out?"
+- "Thanks for the heads up. Do you happen to have [name]'s direct email so I can reach out?"
 - Never escalate for name-only referrals
 
 Referral with direct email address:
