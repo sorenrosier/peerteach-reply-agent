@@ -1,5 +1,5 @@
 # PeerTeach Agent — Test Results
-**Run:** 2026-06-02T23:25:56.266Z
+**Run:** 2026-06-05T18:46:55.192Z
 **Model:** claude-sonnet-4-6
 **Calendly:** mocked (no real API calls)
 
@@ -19,19 +19,19 @@
 ```
 Hi Jane,
 
-So glad it works for you! Here are a couple of times this week:
+So glad it works for you! Here are a couple of times for a quick 30-minute Zoom:
 
-- Wednesday, June 3 at 2:00 PM EDT
-- Thursday, June 4 at 2:00 PM EDT
+- Friday, June 5 at 5:00 PM EDT
+- Monday, June 8 at 2:00 PM EDT
 
-Do either of those work for you?
+Happy to find another time if those don't work. Which looks good?
 
 -Katie.
 ```
 
-**Checks:** 40 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
+**Checks:** 48 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
 
-*5.2s*
+*7.7s*
 
 ---
 
@@ -49,19 +49,21 @@ Do either of those work for you?
 ```
 Hi Jane,
 
-Next week works great. Here are a couple of open slots:
+Next week works perfectly, totally understand this time of year gets hectic.
+
+Here are a couple of options for a quick 30-minute Zoom:
 
 - Monday, June 8 at 1:00 PM CDT
 - Tuesday, June 9 at 1:00 PM CDT
 
-Do either of those work for you?
+Do either of those work for you? Happy to find another time if not.
 
 -Katie.
 ```
 
-**Checks:** 37 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
+**Checks:** 56 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
 
-*5.1s*
+*6.0s*
 
 ---
 
@@ -79,14 +81,14 @@ Do either of those work for you?
 ```
 Hi Jane,
 
-Booked. Calendar invite is on its way. Looking forward to chatting Thursday, June 4 at 2:00 PM PDT!
+Thursday, June 11 at 2:00 PM PDT works great. I just sent over a calendar invite with the Zoom link. I'll also plan to send a quick email reminder on the day of the call. Looking forward to connecting with you!
 
 -Katie.
 ```
 
-**Checks:** 21 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
+**Checks:** 44 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
 
-*7.9s*
+*9.0s*
 
 ---
 
@@ -119,16 +121,19 @@ PeerTeach
 ```
 Hi Jane,
 
-Thursday, June 4 at 3:00 PM CDT works perfectly. I'll send over a calendar invite shortly!
+Sorry for the slow reply , that Thursday slot has unfortunately passed. Would either of these work instead?
 
-Looking forward to connecting.
+- Friday, June 5 at 4:00 PM CDT
+- Monday, June 8 at 1:00 PM CDT
+
+Happy to find another time if those don't work.
 
 -Katie.
 ```
 
-**Checks:** 23 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
+**Checks:** 46 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
 
-*6.7s*
+*13.2s*
 
 ---
 
@@ -161,14 +166,14 @@ PeerTeach
 ```
 Hi Jane,
 
-Booked. Calendar invite is on its way. Looking forward to chatting Thursday at 2:00 PM EDT?
+Thursday at 2:00 PM EDT works great. I just sent over a calendar invite with the Zoom link. I'll also plan to send a quick email reminder on the day of the call. Looking forward to connecting with you!
 
 -Katie.
 ```
 
-**Checks:** 19 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
+**Checks:** 42 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
 
-*4.0s*
+*6.4s*
 
 ---
 
@@ -205,7 +210,7 @@ PeerTeach
 **Action:** `no_reply`
 
 
-*2.2s*
+*3.1s*
 
 ---
 
@@ -223,21 +228,21 @@ PeerTeach
 ```
 Hi Jane,
 
-So glad to hear it! I'd love to connect for a quick 20-30 min Zoom to walk you through how PeerTeach works and whether it'd be a good fit for Greenwood.
+So glad to hear it! I'd love to set up a quick 30-minute Zoom to walk you through PeerTeach and show you what it looks like in action.
 
-A couple of openings this week:
+Here are a couple of times that work on my end:
 
-- Wednesday, June 3 at 11:00 AM PDT
-- Thursday, June 4 at 11:00 AM PDT
+- Friday, June 5 at 2:00 PM PDT
+- Monday, June 8 at 11:00 AM PDT
 
-Do either of those work for you?
+Happy to find another time if those don't work. Do either of those fit your schedule?
 
 -Katie.
 ```
 
-**Checks:** 63 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
+**Checks:** 74 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
 
-*5.8s*
+*7.0s*
 
 ---
 
@@ -255,19 +260,21 @@ Do either of those work for you?
 ```
 Hi Jane,
 
-Two weeks out works great. Here are a couple of options:
+No worries at all, totally understand the end-of-year rush!
 
-- Tuesday, June 16 at 1:00 PM CDT
-- Wednesday, June 17 at 1:00 PM CDT
+Here are a couple of times that week for a quick 30-minute Zoom:
 
-It's just a 20-30 min Zoom call. Do either of those work for you?
+- Friday, June 19 at 1:00 PM CDT
+- Monday, June 22 at 1:00 PM CDT
+
+Do either of those work for you? Happy to find another time if not.
 
 -Katie.
 ```
 
-**Checks:** 44 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
+**Checks:** 55 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
 
-*5.0s*
+*5.8s*
 
 ---
 
@@ -283,16 +290,14 @@ It's just a 20-30 min Zoom call. Do either of those work for you?
 
 **Draft reply:**
 ```
-Hi Jane,
+"Appreciate you taking a moment to respond. Wishing you a smooth and successful school year. If things shift down the line, I'd be happy to connect.
 
-Totally understand, it sounds like you've already got things covered. Hope the rest of the school year goes smoothly, and feel free to reach out if anything changes down the road.
-
--Katie.
+-Katie."
 ```
 
-**Checks:** 34 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
+**Checks:** 27 words ✓ | starts with Hi: ✗ | em dashes: ✓ none
 
-*1.9s*
+*2.4s*
 
 ---
 
@@ -310,14 +315,14 @@ Totally understand, it sounds like you've already got things covered. Hope the r
 ```
 Hi Jane,
 
-Thanks for letting me know. Do you happen to know who the principal is or have their contact info so I can reach out directly?
+Sorry for the confusion! Do you know who the right principal or curriculum contact is for math programs at Lincoln Elementary?
 
 -Katie.
 ```
 
-**Checks:** 28 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
+**Checks:** 24 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
 
-*1.9s*
+*2.5s*
 
 ---
 
@@ -332,7 +337,7 @@ Thanks for letting me know. Do you happen to know who the principal is or have t
 **Action:** `hard_no`
 
 
-*1.6s*
+*1.9s*
 
 ---
 
@@ -350,14 +355,14 @@ Thanks for letting me know. Do you happen to know who the principal is or have t
 ```
 Hi Jane,
 
-Thanks for the heads up. Do you happen to have Maria's direct email so I can reach out to her directly?
+Thanks for pointing me in the right direction. Do you happen to have Maria's direct email so I can reach out to her?
 
 -Katie.
 ```
 
-**Checks:** 24 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
+**Checks:** 26 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
 
-*1.6s*
+*2.5s*
 
 ---
 
@@ -371,9 +376,9 @@ Thanks for the heads up. Do you happen to have Maria's direct email so I can rea
 
 **Action:** `escalate`
 
-**Escalate reason:** Prospect provided a direct email address (maria.gonzalez@school.edu) for their AP — a human needs to handle this intro personally.
+**Escalate reason:** Referral with direct email given — Maria Gonzalez (maria.gonzalez@school.edu) is the AP at Lincoln Elementary. Follow up with her directly.
 
-*2.9s*
+*2.4s*
 
 ---
 
@@ -391,16 +396,16 @@ Thanks for the heads up. Do you happen to have Maria's direct email so I can rea
 ```
 Hi Jane,
 
-No cost at all , PeerTeach is fully free for pilot schools, covered by a grant this school year.
+Great question. PeerTeach is completely free for pilot schools this year, covered by a grant, so there's no cost to you at all.
 
-It's a 20-30 min Zoom call to see if it's a fit. Would you have time this week or next to connect?
+It'd be worth a quick 30-minute Zoom to show you how it works. Can I grab some times for you to take a look?
 
 -Katie.
 ```
 
-**Checks:** 44 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
+**Checks:** 50 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
 
-*2.4s*
+*3.0s*
 
 ---
 
@@ -418,20 +423,20 @@ It's a 20-30 min Zoom call to see if it's a fit. Would you have time this week o
 ```
 Hi Jane,
 
-Great, I'd love to connect! Here are a couple of times that work for a quick 20-30 min Zoom:
+Happy to connect! Here are a couple of times for a quick 30-minute Zoom:
 
-- Wednesday, June 3 at 2:00 PM EDT
-- Thursday, June 4 at 2:00 PM EDT
+- Friday, June 5 at 5:00 PM EDT
+- Monday, June 8 at 2:00 PM EDT
 
-Do either of those work for you?
+Happy to find another time if those don't work.
 
 Kreg
 Co-Founder, PeerTeach
 ```
 
-**Checks:** 47 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
+**Checks:** 44 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
 
-*5.1s*
+*6.5s*
 
 ---
 
@@ -449,19 +454,19 @@ Co-Founder, PeerTeach
 ```
 Hi Jane,
 
-Great, looking forward to it! The available slots I have are:
+Mornings work perfectly. Here are a couple of options for a quick 30-minute Zoom:
 
-- Wednesday, June 3 at 12:00 PM MDT
-- Thursday, June 4 at 12:00 PM MDT
+- Monday, June 8 at 12:00 PM MDT
+- Wednesday, June 10 at 12:00 PM MDT
 
-Either of those work for you?
+Happy to find another time if those don't work.
 
 -Katie.
 ```
 
-**Checks:** 36 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
+**Checks:** 42 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
 
-*6.6s*
+*11.8s*
 
 ---
 
@@ -479,19 +484,19 @@ Either of those work for you?
 ```
 Hi Jane,
 
-Happy to connect! Here are a couple of times that work toward the end of the week:
+Great, end of the week works for me too. Would either of these times work for a quick 30-minute Zoom?
 
-- Thursday, June 4 at 11:00 AM PDT
-- Friday, June 5 at 11:00 AM PDT
+- Friday, June 5 at 12:00 PM PDT
+- Friday, June 5 at 3:00 PM PDT
 
-Just let me know which works for you and I'll send over a Zoom link.
+Happy to find another time if those don't work.
 
 -Katie.
 ```
 
-**Checks:** 51 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
+**Checks:** 48 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
 
-*5.2s*
+*7.2s*
 
 ---
 
@@ -509,19 +514,21 @@ Just let me know which works for you and I'll send over a Zoom link.
 ```
 Hi Jane,
 
-Happy to connect. Would either of these work for a quick 20-30 min Zoom?
+Great to hear from you. I'd love to set up a quick 30-minute Zoom to walk you through how PeerTeach works and what we've seen at pilot schools.
 
-- Wednesday, June 3 at 2:00 PM EDT
-- Thursday, June 4 at 2:00 PM EDT
+A couple of times that could work:
 
-I know it's a busy time of year, so happy to find something that works for you.
+- Friday, June 5 at 5:00 PM EDT
+- Monday, June 8 at 2:00 PM EDT
+
+Happy to find another time if those don't work.
 
 -Katie.
 ```
 
-**Checks:** 50 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
+**Checks:** 63 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
 
-*4.8s*
+*5.9s*
 
 ---
 
@@ -539,20 +546,23 @@ I know it's a busy time of year, so happy to find something that works for you.
 ```
 Hi Jane,
 
-Great question. Here's how it works in practice:
+Great question. Here's how it works in a nutshell:
 
-- Teachers run short, structured peer tutoring sessions during regular class time (no extra time needed)
-- PeerTeach provides the pairing logic, session guides, and progress tracking
-- The teacher facilitates, but students lead the learning
+- Students are paired as tutor and learner based on skill level
+- The teacher gets a simple session guide, so no extra prep needed
+- Sessions run during regular class time, 2-3x per week
+- PeerTeach tracks progress automatically
 
-It's designed to be low-lift for teachers. The best way to see it in action is a quick 20-30 min Zoom. Would you have time for that?
+Teachers usually say it's one of the easiest things they've added to their routine.
+
+Would a quick 30-minute Zoom help to walk through it more concretely?
 
 -Katie.
 ```
 
-**Checks:** 74 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
+**Checks:** 78 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
 
-*4.2s*
+*4.9s*
 
 ---
 
@@ -567,7 +577,7 @@ It's designed to be low-lift for teachers. The best way to see it in action is a
 **Action:** `hard_no`
 
 
-*1.5s*
+*2.0s*
 
 ---
 
@@ -585,19 +595,21 @@ It's designed to be low-lift for teachers. The best way to see it in action is a
 ```
 Hi Jane,
 
-So glad to hear it! PeerTeach is completely free for pilot schools this year, backed by a grant, and we've seen strong results at nearby schools. It's a quick 20-30 min Zoom to walk you through everything.
+So glad you're open to connecting! PeerTeach helps math teachers run structured peer tutoring right during class time, and it's fully free for pilot schools this year.
 
-Do either of these work for a call?
+Would either of these work for a quick 30-minute Zoom?
 
-- Wednesday, June 3 at 2:00 PM EDT
-- Thursday, June 4 at 2:00 PM EDT
+- Friday, June 5 at 5:00 PM EDT
+- Monday, June 8 at 2:00 PM EDT
+
+Happy to find another time if those don't work.
 
 -Katie.
 ```
 
-**Checks:** 64 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
+**Checks:** 65 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
 
-*5.0s*
+*9.3s*
 
 ---
 
@@ -615,21 +627,21 @@ Do either of these work for a call?
 ```
 Hi Jane,
 
-Of course, bring your math department head along. The more the merrier.
+Of course, please bring your math department head along. The more the merrier!
 
-Here are a couple of times that work for a 20-30 min Zoom:
+Here are a couple of times that could work for a quick 30-minute Zoom:
 
-- Wednesday, June 3 at 2:00 PM EDT
-- Thursday, June 4 at 2:00 PM EDT
+- Friday, June 5 at 5:00 PM EDT
+- Monday, June 8 at 2:00 PM EDT
 
-Do either of those work for you both?
+Happy to find another time if those don't work. Just let me know what's best for your team!
 
 -Katie.
 ```
 
-**Checks:** 52 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
+**Checks:** 64 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
 
-*6.2s*
+*7.8s*
 
 ---
 
@@ -675,14 +687,14 @@ Either of those work?
 ```
 Hi David,
 
-Booked. Calendar invite is on its way. Looking forward to chatting Tuesday at 10:00 AM PDT.
+Tuesday, June 9 at 10:00 AM PDT works great. I just sent over a calendar invite with the Zoom link. I'll also plan to send a quick email reminder on the day of the call. Looking forward to connecting with you!
 
 -Katie.
 ```
 
-**Checks:** 19 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
+**Checks:** 44 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
 
-*5.8s*
+*4.7s*
 
 ---
 
@@ -694,20 +706,11 @@ Booked. Calendar invite is on its way. Looking forward to chatting Tuesday at 10
 
 **Their reply:** "Didn't we already do this call? I spoke with someone from your team last month."
 
-**Action:** `draft`
+**Action:** `escalate`
 
-**Draft reply:**
-```
-Hi Jane,
+**Escalate reason:** Prospect says she already had a call with someone on the PeerTeach team last month — may be an existing contact or near-close. Needs human review to check CRM history before responding.
 
-Apologies for the confusion! It's possible a colleague reached out separately. I don't want to duplicate anyone's time. Could you share who you spoke with, or what was covered? That way I can make sure we're not stepping on each other's toes.
-
--Katie.
-```
-
-**Checks:** 45 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
-
-*3.6s*
+*3.1s*
 
 ---
 
@@ -725,18 +728,20 @@ Apologies for the confusion! It's possible a colleague reached out separately. I
 ```
 Hi Jane,
 
-July works great. Here are a couple of options to start:
+July works perfectly. Here are a few options for a quick 30-minute Zoom:
 
 - Wednesday, July 1 at 1:00 PM CDT
 - Thursday, July 2 at 1:00 PM CDT
+- Wednesday, July 8 at 1:00 PM CDT
+- Thursday, July 9 at 1:00 PM CDT
 
-It's just a 20-30 min Zoom, and I'd love to show you what PeerTeach looks like in practice. Do either of those work for you?
+Do any of those work for you? Happy to find another time if not.
 
 -Katie.
 ```
 
-**Checks:** 55 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
+**Checks:** 62 words ✓ | starts with Hi: ✓ | em dashes: ✓ none
 
-*5.2s*
+*7.5s*
 
 ---
