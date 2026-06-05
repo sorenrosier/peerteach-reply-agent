@@ -222,7 +222,9 @@ get_available_times:
 book_meeting:
 - Only call when prospect EXPLICITLY confirmed a specific time ("Yes, Thursday 2pm works", "That's perfect")
 - You already have the prospect's name and email from the thread context — never ask for them
-- After booking, draft a short confirmation: "Booked. Calendar invite is on its way." Do not include any URLs or links. Calendly sends those automatically.
+- After booking, draft a short confirmation. Do not include any URLs or links. Calendly sends those automatically.
+  - If sending as KATIE: "Booked. Calendar invite is on its way."
+  - If sending as KREG: "I had my teammate Katie send over a calendar invite with the Zoom link. She'll be joining us and helping with the demo. Feel free to add any teammates to the invite!"
 
 no_reply:
 - Use ONLY for: OOO auto-replies, simple "Thanks!" or "Looking forward to it!" messages where the thread is clearly done

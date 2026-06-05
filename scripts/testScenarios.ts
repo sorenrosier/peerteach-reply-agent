@@ -306,6 +306,121 @@ const SCENARIOS: Scenario[] = [
     }),
     thread: [],
   },
+
+  // ── New edge case scenarios ────────────────────────────────────────────────
+
+  {
+    name: '16. Prospect says "morning works better for me"',
+    description: 'Vague time preference — agent should find morning slots.',
+    payload: payload({
+      reply_text: "Happy to hop on a call! Mornings work better for me though, before noon if possible.",
+      School: 'Jefferson Middle School, Denver CO',
+    }),
+    thread: [],
+  },
+
+  {
+    name: '17. Prospect says "end of the week"',
+    description: 'Vague day preference — agent should propose Thursday or Friday.',
+    payload: payload({
+      reply_text: "Sure, I can chat. End of the week works best for me.",
+      School: 'Harbor View Elementary, Seattle WA',
+    }),
+    thread: [],
+  },
+
+  {
+    name: '18. Prospect says just "sure"',
+    description: 'Minimal reply showing interest but no details. Should propose times.',
+    payload: payload({
+      reply_text: "Sure.",
+      School: 'Riverside Academy, Atlanta GA',
+    }),
+    thread: [],
+  },
+
+  {
+    name: '19. Prospect asks what PeerTeach actually does',
+    description: 'SOFT_YES — interested but wants more info before committing to a call.',
+    payload: payload({
+      reply_text: "This sounds interesting but can you tell me a bit more about how it actually works in the classroom? What does the teacher have to do?",
+      School: 'Franklin Elementary, Portland OR',
+    }),
+    thread: [],
+  },
+
+  {
+    name: '20. Prospect angry — too many emails',
+    description: 'Hostile but not an explicit unsubscribe. Should escalate.',
+    payload: payload({
+      reply_text: "I've gotten 4 emails from you guys in the past month. This is way too much. Stop.",
+      School: 'Lincoln High School, Phoenix AZ',
+    }),
+    thread: [],
+  },
+
+  {
+    name: '21. Prospect is the AP not the principal',
+    description: 'Still a relevant person — should treat as normal interest, not wrong person.',
+    payload: payload({
+      reply_text: "Hi, I'm the assistant principal here. I handle instructional programs. Yes, I'd be happy to learn more!",
+      Role: 'Assistant Principal',
+      School: 'Sunrise Elementary, Miami FL',
+    }),
+    thread: [],
+  },
+
+  {
+    name: '22. Prospect wants to include their colleague',
+    description: 'Prospect asks if they can bring someone else to the call.',
+    payload: payload({
+      reply_text: "Yes, I'd love to chat! Can I also include our math department head on the call?",
+      School: 'Central Middle School, Columbus OH',
+    }),
+    thread: [],
+  },
+
+  {
+    name: '23. Very long back-and-forth before confirming',
+    description: 'Multi-turn thread with 5 exchanges. Prospect finally confirms a time.',
+    payload: payload({
+      reply_text: "Okay fine, let's just do Tuesday at 10am.",
+      lead_email: 'david.chen@eastside.edu',
+      firstName: 'David',
+      lastName: 'Chen',
+      School: 'Eastside K-8, San Francisco CA',
+    }),
+    thread: [
+      { body: 'Hi David, I wanted to share PeerTeach with you — free math peer tutoring for grades 3-8.', timestamp: '2026-05-20T14:00:00Z', isOutbound: true },
+      { body: "Interesting. Can you tell me more about how it works?", timestamp: '2026-05-21T10:00:00Z', isOutbound: false },
+      { body: "Hi David, happy to! It's a structured peer tutoring program that runs during regular class time — no extra prep for teachers. Developed at Stanford and completely free this year. Worth a quick Zoom?\n\n-Katie.", timestamp: '2026-05-21T10:30:00Z', isOutbound: true },
+      { body: "What grade levels does it cover?", timestamp: '2026-05-22T09:00:00Z', isOutbound: false },
+      { body: "Hi David, grades 3-8, math. The Zoom would only be 20-30 minutes and I can walk you through exactly what it looks like. How does Wednesday, June 3 at 10:00 AM PDT or Thursday, June 4 at 2:00 PM PDT work?\n\n-Katie.", timestamp: '2026-05-22T09:30:00Z', isOutbound: true },
+      { body: "I'm slammed this week. Maybe next week?", timestamp: '2026-05-22T14:00:00Z', isOutbound: false },
+      { body: "Hi David, no problem at all. Here are a couple of times next week:\n- Monday, June 8 at 11:00 AM PDT\n- Tuesday, June 9 at 10:00 AM PDT\n\nEither of those work?\n\n-Katie.", timestamp: '2026-05-22T14:30:00Z', isOutbound: true },
+      { body: "Okay fine, let's just do Tuesday at 10am.", timestamp: '2026-05-23T08:00:00Z', isOutbound: false },
+    ],
+  },
+
+  {
+    name: '24. Prospect replies to follow-up saying they already talked',
+    description: 'Prospect is confused — thinks they already had the call. Should escalate.',
+    payload: payload({
+      reply_text: "Didn't we already do this call? I spoke with someone from your team last month.",
+      School: 'Willowbrook Elementary, Charlotte NC',
+    }),
+    thread: [],
+  },
+
+  {
+    name: '25. Prospect asks for "sometime next month"',
+    description: 'Far future request — agent should fetch slots for next month.',
+    payload: payload({
+      reply_text: "Yes let's connect! Summer would be tough but I could do sometime in July.",
+      School: 'Oakwood Academy, Minneapolis MN',
+    }),
+    thread: [],
+  },
 ];
 
 // ─── Runner ───────────────────────────────────────────────────────────────────
@@ -314,7 +429,7 @@ async function runAll() {
   const lines: string[] = [
     '# PeerTeach Agent — Test Results',
     `**Run:** ${new Date().toISOString()}`,
-    `**Model:** claude-sonnet-4-5-20251022`,
+    `**Model:** claude-sonnet-4-6`,
     `**Calendly:** mocked (no real API calls)`,
     '',
     '---',
