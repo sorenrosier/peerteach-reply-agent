@@ -120,7 +120,7 @@ const TOOLS: Anthropic.Tool[] = [
       'legal mentions, existing PeerTeach user replies, personal OOO messages with return dates, ' +
       'or situations too ambiguous to handle. ' +
       'Do NOT escalate wrong person situations — draft a reply asking for the right contact. ' +
-      'Do NOT escalate referrals — draft a thank-you reply instead (see SITUATION HANDLING).',
+      'DO escalate referrals where a direct email was given — human needs to handle the intro.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -268,14 +268,12 @@ Referral with name only (no email):
 - Never escalate for name-only referrals
 
 Referral with direct email address:
-- Draft a brief thank-you to the wrong person that also surfaces the new contact's info for the human reviewer:
-  Hi [name],
-  That makes complete sense, thank you for pointing me toward [referral name] ([referral email]). I'll reach out to them directly.
-- Do NOT call escalate — just draft this reply. The human reviewing in Slack will see the email address and follow up.
+- Call escalate with reason "Referral — [name] at [email]. Human needs to handle this."
 
 escalate:
 - Existing user replies (handle personally)
 - Personal OOOs with a return date (follow up later)
+- Referrals where a direct email address was given
 - Angry, threatening, or legal language
 - Situations genuinely too complex or ambiguous
 
