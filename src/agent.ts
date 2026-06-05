@@ -217,6 +217,7 @@ get_available_times:
 - Always include the timezone abbreviation shown in the formatted time (EDT, CDT, PDT, etc.)
 - Always refer to the meeting as "a quick 30-minute chat" or "a quick 30-minute Zoom"
 - After proposing times, always end with: "Happy to find another time if those don't work." or similar flexibility offer
+- If the prospect specified two separate day/time constraints (e.g. "Tuesday or Thursday afternoon"), make TWO separate calls with targeted ranges — one for each constraint. Do not use one wide range that includes irrelevant times in between.
 - If the prospect requested a specific time, pass it as requested_time in ISO UTC format — the tool will confirm if it's available or return the 2 closest alternatives
 - If requested_time_available is true, confirm that time directly
 - If requested_time_available is false, briefly acknowledge you're not available then offer the alternatives: "No worries at all! I'm not available then. Would [alt time] or [alt time] work instead? Happy to find another time if not."
@@ -472,7 +473,9 @@ export async function runAgent(
     { role: 'user', content: buildContext(payload, thread) },
   ];
 
-  const MAX_ITERATIONS = 6;
+  // Max realistic flow: 2x get_available_times + book_meeting + draft = 4 iterations.
+  // 8 gives solid headroom for edge cases without risking runaway loops.
+  const MAX_ITERATIONS = 8;
   let bookedDetails: AgentResult['bookingDetails'] | undefined;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
