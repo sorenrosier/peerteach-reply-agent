@@ -26,7 +26,11 @@ export interface ThreadEmail {
   isOutbound: boolean;
 }
 
-const TOOLS: Anthropic.Tool[] = [
+const TOOLS: Anthropic.ToolUnion[] = [
+  // Server-side web search — runs on Anthropic's infrastructure, no handler needed.
+  // The agent uses this only when genuinely unsure about a fact (e.g. an ambiguous
+  // school location it can't place, verifying a district name).
+  { type: 'web_search_20250305', name: 'web_search', max_uses: 3 },
   {
     name: 'get_available_times',
     description:
@@ -139,6 +143,37 @@ function getSenderIdentity(emailAccount: string): { firstName: string; signOff: 
   return { firstName: 'Katie', signOff: '-Katie.' };
 }
 
+// Returns the current phase of the US school year plus natural language guidance,
+// derived from the current month so the agent's seasonal references are always accurate.
+function getSchoolYearContext(now: Date): string {
+  const month = now.getMonth(); // 0 = Jan, 5 = Jun, 7 = Aug, 8 = Sep
+  const day = now.getDate();
+
+  if (month === 5 && day <= 15) {
+    return 'It is early-to-mid June, the very end of the school year. Administrators are wrapping up. A brief, warm acknowledgment like "as you close out the year" fits. Summer is a good time to plan ahead for fall.';
+  }
+  if ((month === 5 && day > 15) || month === 6 || (month === 7 && day <= 15)) {
+    return 'It is summer break. Schools are mostly out. A light "hope you\'re enjoying the summer" fits naturally. This is a good window to plan ahead for the fall semester.';
+  }
+  if ((month === 7 && day > 15) || month === 8) {
+    return 'It is back-to-school season. Administrators are gearing up for the new year. A brief "as you kick off the new year" fits.';
+  }
+  if (month === 9 || month === 10) {
+    return 'It is fall, early in the school year. Things are in full swing. No strong seasonal note needed.';
+  }
+  if (month === 11) {
+    return 'It is December, heading into winter break. A brief "before the holidays" or "heading into the break" can fit if relevant.';
+  }
+  if (month === 0) {
+    return 'It is January, the start of the spring semester. A brief "as you start the new semester" can fit.';
+  }
+  if (month >= 1 && month <= 3) {
+    return 'It is late winter / spring, mid-school-year. Things are in full swing. No strong seasonal note needed.';
+  }
+  // April-May
+  return 'It is spring, with the end of the school year approaching. A light "as the year winds down" can fit. Summer is a good time to plan ahead for fall.';
+}
+
 function buildSystemPrompt(payload: InstantlyWebhookPayload): string {
   const { firstName: senderFirst, signOff } = getSenderIdentity(payload.email_account);
   const isKreg = senderFirst === 'Kreg';
@@ -174,8 +209,8 @@ CURRENT DATE/TIME: ${dateTimeStr}
 TODAY (ISO): ${todayIso}
 
 SCHOOL YEAR CONTEXT:
-It is early June 2026, end of the school year. Many administrators are wrapping up the year.
-If scheduling feels hard now, the summer is a good time to plan ahead for next year.
+${getSchoolYearContext(now)}
+- You know today's date (above) and the part of the school year it is. When it fits naturally, a brief, genuine seasonal touch is good ("hope you're enjoying the summer," "as you close out the year"). Keep it to a short phrase, never forced, and never more than once per email. If it does not fit the message, leave it out.
 
 OUTPUT RULES (most important):
 - Output ONLY the final reply text, nothing else
@@ -183,6 +218,18 @@ OUTPUT RULES (most important):
 - Never show "Note:", "Draft:", "Corrected:", dashes separating versions, or any meta-commentary
 - Fix mistakes silently and output only the clean final reply
 - The text you output goes directly into an email — it must be ready to send
+
+READ THE FULL THREAD BEFORE DECIDING (critical):
+- Read every prior email in the thread before deciding what to do or say. Earlier messages often change the right response.
+- Carry forward anything the prospect said earlier that is still relevant: a time or day they mentioned, a constraint ("only Tuesdays," "after 3pm," "not until July"), a question they asked, a name they referenced, their role, or their reason for interest.
+- If they proposed or mentioned a time earlier in the thread, treat it as live context now, even if their latest message did not repeat it.
+- Base your reply on the latest message, but informed by the whole conversation, never just the last line in isolation.
+
+NO REDUNDANCY (critical):
+- Never repeat information already stated earlier in the thread. They have read your prior emails.
+- Do not re-introduce yourself, re-explain what PeerTeach is, or re-pitch if you already covered it earlier in the conversation. A continuing thread is a conversation, not a fresh cold email.
+- Do not restate something the prospect already knows or already told you. Acknowledge briefly and move forward.
+- Each reply should add something new: an answer, times, a next step. If there is nothing new to add, that is a signal to use no_reply.
 
 VOICE RULES (non-negotiable):
 - Short, warm, and direct. Never filler, never pushy, never over-explained.
@@ -199,12 +246,19 @@ VOICE RULES (non-negotiable):
 
 TIMEZONE INFERENCE:
 Before calling get_available_times or book_meeting, determine the prospect's timezone:
+- If a State is given in the prospect details, use it directly — that is the source of truth
 - California, Oregon, Washington → America/Los_Angeles
 - Texas, Oklahoma, Kansas → America/Chicago
 - Mountain states (CO, AZ, NM, UT, MT, ID) → America/Denver
 - Midwest (IL, WI, MN, MO, OH, MI, IN, IA) → America/Chicago
 - East Coast, Southeast, Northeast → America/New_York
-- Default to America/New_York if unknown
+- Note: Arizona does not observe daylight saving (America/Phoenix), but America/Denver is acceptable
+- If you genuinely cannot place the school's location and no State is given, use the web_search tool to look up where the school or district is, then map it. Default to America/New_York only as a last resort.
+
+web_search:
+- Use ONLY when genuinely uncertain about a fact you need — most often an ambiguous school/district location you cannot place from the name alone
+- Do not use it for anything the thread or prospect details already tell you
+- Keep it rare. It is a fallback, not a default
 
 get_available_times:
 - Call this EVERY time you need to mention specific meeting times
@@ -226,8 +280,9 @@ book_meeting:
 - Only call when prospect EXPLICITLY confirmed a specific time ("Yes, Thursday 2pm works", "That's perfect")
 - You already have the prospect's name and email from the thread context — never ask for them
 - After booking, draft a short confirmation. Do not include any URLs or links. Calendly sends those automatically.
-  - If sending as KATIE: "[Day + time] works great. I just sent over a calendar invite with the Zoom link. I'll also plan to send a quick email reminder on the day of the call. Looking forward to connecting with you!"
-  - If sending as KREG: "Thanks for getting back to me. [Day + time] works great. I had my teammate Katie send over a calendar invite with the Zoom link. She'll also be joining us and helping with the demonstration. I left the invite editable. Feel free to add your teammates!"
+- DO NOT restate the exact day and time they just booked. They just said it, and the calendar invite already shows it. Repeating it back reads as robotic. Confirm warmly without parroting the slot.
+  - If sending as KATIE: "Perfect, that works on my end. I just sent over a calendar invite with the Zoom link, and I'll send a quick reminder the day of as well. Looking forward to connecting!"
+  - If sending as KREG: "Thanks for getting back to me, that works well. I had my teammate Katie send over a calendar invite with the Zoom link. She'll be joining us and helping with the demo. I left the invite editable, so feel free to add your teammates!"
 
 no_reply:
 - Use ONLY for: automated OOO auto-replies (generic "I am out of the office" with no personal content), simple "Thanks!" or "Looking forward to it!" messages where the thread is clearly done
@@ -244,8 +299,10 @@ Existing PeerTeach user reply:
 - Do NOT pitch them a Zoom or treat them as a new prospect
 
 Personal OOO with return date:
-- If the OOO is clearly written by a real person AND mentions a specific return date or future timeframe ("I'm on paternity leave," "back August 10th," "will look next fall," "retiring June 24") — call escalate with reason "Personal OOO — [name] returns [date/timeframe]. Consider following up then."
-- If it's a standard automated auto-responder with no personal content — call no_reply
+- ONLY applies if the LATEST REPLY itself is an OOO — ignore OOO text found inside quoted/thread history
+- If the LATEST REPLY is clearly written by a real person AND mentions a specific return date or future timeframe ("I'm on paternity leave," "back August 10th," "will look next fall," "retiring June 24") — call escalate with reason "Personal OOO — [name] returns [date/timeframe]. Consider following up then."
+- If the LATEST REPLY is a standard automated auto-responder with no personal content — call no_reply
+- If the LATEST REPLY is from a DIFFERENT person than the prospect (different name, different organization) — treat the prospect's actual message as the real reply and ignore the unrelated OOO entirely
 
 Soft no (not interested, not now, too busy, already have something):
 - "Not at this time," "not right now," "pass for right now," "we're not interested" — all variants of the same thing
@@ -291,24 +348,27 @@ function buildContext(payload: InstantlyWebhookPayload, thread: ThreadEmail[]): 
     payload['School/District Nickname'] ||
     payload['District Name'] ||
     'unknown school';
+  const state = payload.State || payload.state || '';
 
-  let ctx = `PROSPECT: ${name}, ${role} at ${school}\n`;
+  let ctx = `PROSPECT: ${name}, ${role} at ${school}${state ? `, ${state}` : ''}\n`;
+  if (state) ctx += `STATE: ${state}\n`;
   ctx += `EMAIL: ${payload.lead_email}\n`;
   ctx += `CAMPAIGN: ${payload.campaign_name}\n\n`;
 
-  ctx += `--- EMAIL THREAD ---\n\n`;
+  ctx += `--- EMAIL THREAD (oldest first) ---\n\n`;
 
   if (thread.length > 0) {
     for (const email of thread) {
-      const from = email.isOutbound ? `You (${payload.email_account})` : name;
+      const from = email.isOutbound ? `You (${payload.email_account})` : `${name} (${payload.lead_email})`;
       ctx += `[${from}${email.timestamp ? ' · ' + email.timestamp : ''}]\n${email.body}\n\n`;
     }
   } else {
-    ctx += `[Original email you sent]\n${payload.email_text || '(unavailable)'}\n\n`;
-    ctx += `[Latest reply from ${name}]\n${payload.reply_text || payload.reply_text_snippet || '(empty)'}`;
+    ctx += `[You · ${payload.email_account}]\n${payload.email_text || '(unavailable)'}\n\n`;
   }
 
-  ctx += `\n---\n\nReply to the latest message from ${name}. Use tools as needed. Return a draft reply OR call an action tool.`;
+  ctx += `--- LATEST REPLY (this is what just came in — your job is to respond to this) ---\n`;
+  ctx += `[${name} (${payload.lead_email})]\n${payload.reply_text || payload.reply_text_snippet || '(empty)'}\n`;
+  ctx += `---\n\nRespond to the LATEST REPLY above. Any OOO or unrelated content in older thread emails is context only — do not let it override the latest reply. Use tools as needed.`;
   return ctx;
 }
 
@@ -483,13 +543,20 @@ export async function runAgent(
 
     const response = await client.messages.create({
       model: MODEL,
-      max_tokens: 1024,
+      max_tokens: 2048,
       system: buildSystemPrompt(payload),
       tools: TOOLS,
       messages,
     });
 
     messages.push({ role: 'assistant', content: response.content });
+
+    // Server-side tools (web_search) can pause if their internal loop runs long.
+    // Re-send to let Anthropic resume — do NOT add a user message.
+    if (response.stop_reason === 'pause_turn') {
+      console.log('[agent] pause_turn — resuming server-side tool');
+      continue;
+    }
 
     if (response.stop_reason === 'end_turn') {
       const textBlock = response.content.find((b) => b.type === 'text');

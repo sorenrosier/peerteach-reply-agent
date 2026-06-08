@@ -9,7 +9,7 @@
     "test:webhook": "ts-node scripts/testWebhook.ts"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
+    "@anthropic-ai/sdk": "^0.102.0",
     "@slack/web-api": "^7.0.0",
     "@types/dotenv": "^6.1.1",
     "@vercel/node": "^3.0.0",

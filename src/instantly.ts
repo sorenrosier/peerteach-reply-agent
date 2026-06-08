@@ -174,12 +174,25 @@ export async function fetchEmailThread(
       url: '/emails',
       params: {
         campaign_id: campaignId,
-        email: leadEmail,
+        lead: leadEmail,
         limit: 20,
       },
     });
     const items: any[] = res.items ?? res.data ?? [];
     const emails = items
+      .filter((e: any) => {
+        // Safety: only include emails that belong to this lead
+        const itemLead = (e.lead_email ?? e.lead ?? '').toLowerCase();
+        const itemTo = (e.to_address ?? e.to ?? '').toLowerCase();
+        const itemFrom = (e.from_address ?? e.from ?? '').toLowerCase();
+        const target = leadEmail.toLowerCase();
+        // If the API returns a lead_email field, use it strictly
+        if (itemLead) return itemLead === target;
+        // Otherwise accept if to or from matches (outbound = to, inbound = from)
+        if (itemTo || itemFrom) return itemTo === target || itemFrom === target;
+        // No address fields at all — include and let Claude sort it out
+        return true;
+      })
       .map((e: any) => ({
         body: (e.body?.text ?? e.text ?? e.reply_text ?? e.email_text ?? '').trim(),
         timestamp: e.timestamp ?? e.created_at ?? e.date_created ?? '',
