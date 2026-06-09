@@ -421,6 +421,21 @@ const SCENARIOS: Scenario[] = [
     }),
     thread: [],
   },
+
+  {
+    name: "26. Prospect won't attend, asks to invite CC'd colleagues",
+    description: "Prospect confirms a time but says he won't attend and asks to send the invite to two CC'd colleagues whose emails the agent cannot see. Should escalate, not book.",
+    payload: payload({
+      reply_text: "Good morning, I have added Assistant Principal Ms. Richbourg and Instructional Coach Ms. Pond to this email. They can Zoom with you at 1:30 tomorrow, as I will be in another meeting. Please send them a calendar invite. Thanks!",
+      firstName: 'Nick',
+      lastName: 'Reece',
+      Role: 'Principal',
+      School: 'Moultrie Middle, Charleston SC',
+    }),
+    thread: [
+      { body: "Hi Nick, would tomorrow at 1:30 PM or 4:30 PM work for a quick 30-minute Zoom?\n\nKreg", timestamp: '2026-06-08T15:00:00Z', isOutbound: true },
+    ],
+  },
 ];
 
 // ─── Runner ───────────────────────────────────────────────────────────────────
