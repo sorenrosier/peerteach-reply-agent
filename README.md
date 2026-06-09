@@ -26,8 +26,11 @@ The agent uses Claude (claude-sonnet-4-6) with tool use. It reads the full email
 - **`no_reply`** — signals no response is needed (OOO, "Thanks!", post-booking acknowledgments)
 - **`hard_no`** — signals the prospect asked to unsubscribe
 - **`escalate`** — signals a human needs to handle it (referrals with direct emails, legal language, etc.)
+- **`web_search`** — server-side (Anthropic-hosted) fallback the agent uses only when it genuinely cannot place a school/district's location for timezone purposes. Rare by design.
 
-The agent reasons dynamically. If a prospect says "2 weeks from now," it fetches availability for that window. If they confirm a specific time, it books it. It handles multi-turn conversations by reading the entire thread on every reply.
+The agent reasons dynamically. If a prospect says "2 weeks from now," it fetches availability for that window. If they confirm a specific time, it books it. It handles multi-turn conversations by reading the entire thread on every reply, and it never repeats information already covered earlier in the thread.
+
+**Time references are natural.** Instead of "Monday, June 9 at 1:00 PM CDT," the agent says "tomorrow at 1:00 PM CDT" or "this Thursday at 2:00 PM CDT." The relative day is computed in code in the prospect's timezone, so it is always exact.
 
 ---
 
@@ -60,9 +63,15 @@ You need accounts on all of these (all have free tiers):
 - [Node.js](https://nodejs.org) 18+ and npm — for local development
 - [Git](https://git-scm.com) — for version control
 
+### Costs
+
+Most of these run on flat subscriptions you likely already pay (Instantly, Calendly) or free tiers (Slack, Vercel hobby, GitHub). The only **per-use** cost is the **Anthropic API** — roughly a cent per reply processed. The optional `web_search` fallback adds about a cent per search on top, but it only fires when the agent genuinely can't place a location, so it's rare. Adding a `State` variable to your leads (see Troubleshooting → timezone) keeps web search from being needed at all.
+
 ---
 
 ## Setup — step by step
+
+> **Running your own independent copy?** Fork this repo to your own GitHub, then in the Vercel dashboard choose **Add New → Project → Import** and select your fork. Add the environment variables below under Settings → Environment Variables, redeploy, and point the Slack interactivity URL and Instantly webhook URL at your new `*.vercel.app` domain (Steps 8 and 9). Everything runs on your own accounts and keys — no shared infrastructure.
 
 ### Step 1: Clone and install
 
@@ -268,7 +277,13 @@ Tests use real Claude API calls but mock Calendly — no bookings created:
 npx ts-node scripts/testScenarios.ts
 ```
 
-Results are written to `scripts/test-results.md`. Covers 15 scenarios including scheduling, booking, soft no, wrong person, referrals, timezones, and multi-turn conversations.
+Results are written to `scripts/test-results.md`. Covers 25 scenarios including scheduling, booking, soft no, wrong person, referrals, timezones, and multi-turn conversations.
+
+To verify the natural time-phrasing logic (today/tomorrow/this Thursday, timezone boundaries, no-DST Arizona) without any API calls:
+
+```bash
+npx ts-node scripts/verifyNaturalTime.ts
+```
 
 ---
 
@@ -295,7 +310,7 @@ All agent behavior is controlled in `src/agent.ts`:
 - **System prompt** — in `buildSystemPrompt()`. Edit here to change tone, voice rules, what to do in specific situations, product knowledge.
 - **Tool definitions** — the `TOOLS` array. Add new tools here if you want the agent to do new things (e.g. update a CRM, send a follow-up sequence).
 - **Sender identity** — in `getSenderIdentity()`. Add new senders by checking `email_account`.
-- **Max iterations** — `MAX_ITERATIONS = 6`. This is how many back-and-forth Claude API calls can happen per webhook. 6 is enough for the most complex booking flows.
+- **Max iterations** — `MAX_ITERATIONS = 8`. This is how many back-and-forth Claude API calls can happen per webhook. 8 covers the most complex flows (e.g. two separate availability lookups for "Tuesday or Thursday afternoon," plus a booking, plus the draft).
 
 ---
 
@@ -317,8 +332,9 @@ src/
   types.ts            TypeScript types shared across the codebase
 
 scripts/
-  testScenarios.ts    15-scenario test suite (mocked Calendly, real Claude)
-  test-results.md     Output from the last test run
+  testScenarios.ts        25-scenario test suite (mocked Calendly, real Claude)
+  verifyNaturalTime.ts    Offline test for natural time phrasing (no API calls)
+  test-results.md         Output from the last test run
 ```
 
 ---
@@ -388,8 +404,9 @@ Their reply:
 - Verify `CALENDLY_LOCATION_URL` matches the location configured on that event type
 
 **Agent proposes wrong timezone:**
-- The agent infers timezone from the school name/location in the Instantly lead data
-- Make sure your Instantly leads have accurate school/district names with state info
+- For best accuracy, add a `State` custom variable to your Instantly leads (e.g. "Texas"). The agent treats it as the source of truth for timezone — deterministic, no guessing.
+- If no `State` is present, the agent infers timezone from the school/district name. Make sure those names include enough location detail to be placed.
+- As a last resort, the agent will use the `web_search` tool to look up an ambiguous location. This is rare and incurs a small per-search cost (see note below).
 
 **Draft is too long or sounds off:**
 - Edit the system prompt in `src/agent.ts` → `buildSystemPrompt()`
