@@ -412,7 +412,7 @@ function pickTwoSlots(
 // Builds a natural, human-sounding reference to a slot relative to today,
 // e.g. "tomorrow at 1:00 PM CDT", "this Thursday at 2:00 PM CDT", "next Monday at 10:00 AM CDT".
 // Date math is done in code (in the prospect's timezone) so the day reference is always exact.
-function naturalTimePhrase(isoStart: string, now: Date, tz: string): string {
+export function naturalTimePhrase(isoStart: string, now: Date, tz: string): string {
   const slot = new Date(isoStart);
   const time = new Intl.DateTimeFormat('en-US', {
     hour: 'numeric',
