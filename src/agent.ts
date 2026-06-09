@@ -24,6 +24,9 @@ export interface ThreadEmail {
   body: string;
   timestamp: string;
   isOutbound: boolean;
+  from?: string;
+  to?: string[];
+  cc?: string[];
 }
 
 const TOOLS: Anthropic.ToolUnion[] = [
@@ -122,7 +125,6 @@ const TOOLS: Anthropic.ToolUnion[] = [
     description:
       'Call when human judgment is required OR when the situation is outside what you can confidently handle: ' +
       'angry or threatening replies, legal mentions, existing PeerTeach user replies, personal OOO messages with return dates, ' +
-      'the prospect not attending themselves and asking you to invite other named people whose emails you do not have, ' +
       'anything needing information you do not have, ' +
       'or any situation that is ambiguous, lacks clear context, or falls outside scheduling a single prospect. ' +
       'When in doubt, escalate rather than guess. ' +
@@ -206,7 +208,7 @@ PRODUCT:
 - Fully free for pilot schools — covered by a grant this school year
 - Developed at Stanford, Reach Capital-backed
 - Proven results at pilot schools nearby
-- The only ask: a 20-30 min Zoom call
+- The only ask: a 30-minute Zoom call
 
 CURRENT DATE/TIME: ${dateTimeStr}
 TODAY (ISO): ${todayIso}
@@ -283,10 +285,13 @@ get_available_times:
 book_meeting:
 - Only call when prospect EXPLICITLY confirmed a specific time ("Yes, Thursday 2pm works", "That's perfect")
 - You already have the prospect's name and email from the thread context — never ask for them
+- You never need anyone's email to invite them. Everyone else on the thread is added to the invite as a guest automatically. If the prospect asked to include colleagues or said others will attend, just book — do not ask for emails.
 - After booking, draft a short confirmation. Do not include any URLs or links. Calendly sends those automatically.
 - DO NOT restate the exact day and time they just booked. They just said it, and the calendar invite already shows it. Repeating it back reads as robotic. Confirm warmly without parroting the slot.
   - If sending as KATIE: "Perfect, that works on my end. I just sent over a calendar invite with the Zoom link. Looking forward to connecting!"
   - If sending as KREG: "Thanks for getting back to me, that works well. I had my teammate Katie send over a calendar invite with the Zoom link. She'll be joining us and helping with the demo. I left the invite editable, so feel free to add your teammates!"
+- GUESTS: if the book_meeting result has a non-empty "guests_added" list, the prospect's colleagues were added to the invite. Briefly acknowledge this in the confirmation. If the prospect named them, you may name them (e.g. "I've added Ms. Richbourg and Ms. Pond to the invite as well"); otherwise say "I've included your colleagues on the invite as well." If the prospect said they themselves won't attend, address the reply warmly to the group rather than implying they'll be there ("Looking forward to connecting with the team").
+  - Example (KREG, prospect won't attend, colleagues added): "Hi Nick, perfect! I had my teammate Katie send over a calendar invite with the Zoom link, and I've added Ms. Richbourg and Ms. Pond as well. She'll be joining to help with the demo. Looking forward to connecting with the team."
 
 no_reply:
 - Use ONLY for: automated OOO auto-replies (generic "I am out of the office" with no personal content), simple "Thanks!" or "Looking forward to it!" messages where the thread is clearly done
@@ -337,8 +342,7 @@ escalate:
 - Personal OOOs with a return date (follow up later)
 - Referrals where a direct email address was given
 - Angry, threatening, or legal language
-- The prospect will NOT attend themselves and asks you to send the invite to other named people, or says colleagues (CC'd or named) are the actual attendees. You only receive this one prospect's email and can only book that one person — you cannot capture or send invites to others. Do NOT book the prospect and do NOT ask for the other emails. Escalate so a human can send the invites. (Exception: if the prospect IS attending and simply wants to bring a colleague along, that is fine — book it and mention the calendar invite is editable so they can add their team. No escalation needed.)
-- Anything that requires information you do not have (e.g. an email address that isn't in the thread), or an action beyond scheduling the single prospect into Calendly
+- Anything that requires information you do not have, or an action beyond scheduling into Calendly. (Note: you do NOT need anyone's email address to invite them — when others are on the thread, the system automatically adds them all to the calendar invite as guests. Just book normally. This includes cases where the prospect says colleagues will attend or asks you to invite people they've CC'd.)
 - WHEN IN DOUBT, ESCALATE. If a reply is ambiguous, the context seems incomplete, something unexpected is happening, or it feels outside what this agent was built for (scheduling one prospect), do not guess or improvise — escalate with a clear reason describing what's unclear. A human catching an edge case is far better than the agent acting on a wrong assumption.
 
 REMEMBER: You have access to the full email thread. Use all prior context.
@@ -460,6 +464,40 @@ export function naturalTimePhrase(isoStart: string, now: Date, tz: string): stri
   return `${day} at ${time}`;
 }
 
+// Collects every other person on the conversation to add as Calendly guests when booking.
+// Deterministic and judgment-free: takes the most recent inbound email's from/to/cc,
+// drops our own sending account and the primary invitee (the lead), and returns the rest.
+// Different addresses for the same person are all kept (we do not dedupe by person).
+export function computeGuestEmails(thread: ThreadEmail[], payload: InstantlyWebhookPayload): string[] {
+  const latestInbound = [...thread].reverse().find((e) => !e.isOutbound);
+  if (!latestInbound) return [];
+
+  const candidates = [
+    latestInbound.from,
+    ...(latestInbound.to ?? []),
+    ...(latestInbound.cc ?? []),
+  ];
+
+  const exclude = new Set(
+    [payload.email_account, payload.lead_email]
+      .filter(Boolean)
+      .map((e) => e!.toLowerCase().trim()),
+  );
+
+  const seen = new Set<string>();
+  const guests: string[] = [];
+  for (const raw of candidates) {
+    if (!raw) continue;
+    const email = raw.toLowerCase().trim();
+    if (!email || !email.includes('@')) continue;
+    if (exclude.has(email)) continue; // our account or the primary invitee
+    if (seen.has(email)) continue; // exact-duplicate address
+    seen.add(email);
+    guests.push(email);
+  }
+  return guests;
+}
+
 export interface AgentMocks {
   getAvailableTimes?: typeof getAvailableTimes;
   bookMeeting?: typeof bookMeeting;
@@ -470,6 +508,7 @@ async function executeToolWithRetry(
   input: Record<string, any>,
   attempt = 0,
   mocks: AgentMocks = {},
+  guestEmails: string[] = [],
 ): Promise<{ data?: any; specialAction?: AgentResult }> {
   try {
     if (name === 'get_available_times') {
@@ -537,10 +576,19 @@ async function executeToolWithRetry(
         name: input.name,
         email: input.email,
         timezone: input.timezone,
+        guests: guestEmails,
       });
-      console.log(`[agent] book_meeting succeeded: ${booking.startTime}`);
+      console.log(
+        `[agent] book_meeting succeeded: ${booking.startTime}` +
+          (guestEmails.length ? ` (guests: ${guestEmails.join(', ')})` : ''),
+      );
       return {
-        data: { success: true, startTime: booking.startTime, rescheduleUrl: booking.rescheduleUrl },
+        data: {
+          success: true,
+          startTime: booking.startTime,
+          rescheduleUrl: booking.rescheduleUrl,
+          guests_added: guestEmails,
+        },
         specialAction: undefined,
       };
     }
@@ -570,7 +618,7 @@ async function executeToolWithRetry(
     console.error(`[agent] tool ${name} failed (attempt ${attempt}):`, msg);
     if (attempt < 2) {
       await sleep(500 * Math.pow(2, attempt));
-      return executeToolWithRetry(name, input, attempt + 1, mocks);
+      return executeToolWithRetry(name, input, attempt + 1, mocks, guestEmails);
     }
     return { data: { error: msg } };
   }
@@ -586,6 +634,13 @@ export async function runAgent(
   const messages: Anthropic.MessageParam[] = [
     { role: 'user', content: buildContext(payload, thread) },
   ];
+
+  // Everyone else on the thread (CC'd colleagues, additional recipients) is added as a
+  // Calendly guest automatically when a booking happens. Computed in code, not by the model.
+  const guestEmails = computeGuestEmails(thread, payload);
+  if (guestEmails.length) {
+    console.log(`[agent] will add guests on booking: ${guestEmails.join(', ')}`);
+  }
 
   // Max realistic flow: 2x get_available_times + book_meeting + draft = 4 iterations.
   // 8 gives solid headroom for edge cases without risking runaway loops.
@@ -644,7 +699,7 @@ export async function runAgent(
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
 
       for (const block of toolUseBlocks) {
-        const result = await executeToolWithRetry(block.name, block.input as Record<string, any>, 0, mocks);
+        const result = await executeToolWithRetry(block.name, block.input as Record<string, any>, 0, mocks, guestEmails);
 
         if (result.specialAction) {
           return result.specialAction;

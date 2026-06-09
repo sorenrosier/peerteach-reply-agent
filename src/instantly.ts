@@ -193,11 +193,33 @@ export async function fetchEmailThread(
         // No address fields at all — include and let Claude sort it out
         return true;
       })
-      .map((e: any) => ({
-        body: (e.body?.text ?? e.text ?? e.reply_text ?? e.email_text ?? '').trim(),
-        timestamp: e.timestamp ?? e.created_at ?? e.date_created ?? '',
-        isOutbound: !!(e.is_sent ?? e.is_outbound ?? false),
-      }))
+      .map((e: any) => {
+        // Parse recipient lists: prefer the structured *_json arrays, fall back to CSV strings.
+        const addrList = (json: any, csv: any): string[] => {
+          if (Array.isArray(json)) {
+            return json.map((r: any) => (r?.address ?? r?.email ?? '').toLowerCase().trim()).filter(Boolean);
+          }
+          if (typeof csv === 'string') {
+            return csv.split(',').map((s) => s.toLowerCase().trim()).filter(Boolean);
+          }
+          return [];
+        };
+        const eaccount = (e.eaccount ?? '').toLowerCase().trim();
+        const from = (e.from_address_email ?? e.from_address ?? e.from ?? '').toLowerCase().trim();
+        // Direction: explicit flag if present, otherwise an email FROM our own account is outbound.
+        const isOutbound =
+          e.is_sent !== undefined || e.is_outbound !== undefined
+            ? !!(e.is_sent ?? e.is_outbound)
+            : !!(eaccount && from === eaccount);
+        return {
+          body: (e.body?.text ?? e.text ?? e.reply_text ?? e.email_text ?? '').trim(),
+          timestamp: e.timestamp ?? e.timestamp_email ?? e.created_at ?? e.date_created ?? '',
+          isOutbound,
+          from,
+          to: addrList(e.to_address_json, e.to_address_email_list),
+          cc: addrList(e.cc_address_json, e.cc_address_email_list),
+        };
+      })
       .filter((e) => e.body.length > 0)
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     console.log(`[instantly] fetchEmailThread: ${emails.length} emails for ${leadEmail}`);

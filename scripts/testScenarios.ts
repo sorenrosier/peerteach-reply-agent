@@ -39,7 +39,11 @@ const mockGetAvailableTimes = async (startTime: string, endTime: string): Promis
   return fakeSlotsForRange(startTime, endTime);
 };
 
-const mockBookMeeting = async (params: { startTime: string; name: string; email: string; timezone: string }): Promise<BookingResult> => {
+// Records the guests passed on the most recent booking so the report can show them.
+let lastBookingGuests: string[] = [];
+
+const mockBookMeeting = async (params: { startTime: string; name: string; email: string; timezone: string; guests?: string[] }): Promise<BookingResult> => {
+  lastBookingGuests = params.guests ?? [];
   return {
     uri: 'https://api.calendly.com/scheduled_events/MOCK/invitees/MOCK',
     startTime: params.startTime,
@@ -424,16 +428,32 @@ const SCENARIOS: Scenario[] = [
 
   {
     name: "26. Prospect won't attend, asks to invite CC'd colleagues",
-    description: "Prospect confirms a time but says he won't attend and asks to send the invite to two CC'd colleagues whose emails the agent cannot see. Should escalate, not book.",
+    description: "Prospect confirms 1:30 but says he won't attend and CC's two colleagues, asking to invite them. Should book and add all CC'd recipients (and his second address) as guests automatically — not escalate.",
     payload: payload({
       reply_text: "Good morning, I have added Assistant Principal Ms. Richbourg and Instructional Coach Ms. Pond to this email. They can Zoom with you at 1:30 tomorrow, as I will be in another meeting. Please send them a calendar invite. Thanks!",
+      lead_email: 'nicholas_reece@charleston.k12.sc.us',
+      email_account: 'kreg@peerteach.us',
       firstName: 'Nick',
       lastName: 'Reece',
       Role: 'Principal',
       School: 'Moultrie Middle, Charleston SC',
     }),
     thread: [
-      { body: "Hi Nick, would tomorrow at 1:30 PM or 4:30 PM work for a quick 30-minute Zoom?\n\nKreg", timestamp: '2026-06-08T15:00:00Z', isOutbound: true },
+      {
+        body: "Hi Nick, would tomorrow at 1:30 PM EDT or 4:30 PM EDT work for a quick 30-minute Zoom?\n\nKreg",
+        timestamp: '2026-06-08T15:00:00Z',
+        isOutbound: true,
+        from: 'kreg@peerteach.us',
+        to: ['nicholas_reece@charleston.k12.sc.us'],
+      },
+      {
+        body: "Good morning, I have added Assistant Principal Ms. Richbourg and Instructional Coach Ms. Pond to this email. They can Zoom with you at 1:30 tomorrow, as I will be in another meeting. Please send them a calendar invite. Thanks!",
+        timestamp: '2026-06-08T16:00:00Z',
+        isOutbound: false,
+        // Nick replies from a different address than the lead on file, and CC's two colleagues.
+        from: 'nicholas_reece@charlestoncountyschools.gov',
+        to: ['kreg@peerteach.us', 'marion_pond@charleston.k12.sc.us', 'nicole_richbourg@charleston.k12.sc.us'],
+      },
     ],
   },
 ];
@@ -457,6 +477,7 @@ async function runAll() {
 
     let result;
     let error: string | undefined;
+    lastBookingGuests = [];
     try {
       result = await runAgent(scenario.payload, scenario.thread, MOCKS);
     } catch (err) {
@@ -490,6 +511,9 @@ async function runAll() {
       lines.push(`**ERROR:** ${error}`);
     } else if (result) {
       lines.push(`**Action:** \`${result.action}\`${result.booked ? ' (meeting booked)' : ''}`);
+      if (result.booked && lastBookingGuests.length) {
+        lines.push(`**Guests added to invite:** ${lastBookingGuests.join(', ')}`);
+      }
       lines.push('');
 
       if (result.action === 'draft' && result.draft) {

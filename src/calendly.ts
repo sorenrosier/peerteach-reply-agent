@@ -92,6 +92,7 @@ export async function bookMeeting(params: {
   name: string;
   email: string;
   timezone: string;
+  guests?: string[];
 }): Promise<BookingResult> {
   const eventTypeUri = process.env.CALENDLY_EVENT_TYPE_URI;
   if (!eventTypeUri) throw new Error('CALENDLY_EVENT_TYPE_URI not set');
@@ -116,6 +117,7 @@ export async function bookMeeting(params: {
         email: params.email,
         timezone: params.timezone,
       },
+      ...(params.guests && params.guests.length ? { event_guests: params.guests } : {}),
       ...(locationUrl ? { location: { kind: 'custom', location: locationUrl } } : {}),
     },
   });
