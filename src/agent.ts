@@ -268,7 +268,8 @@ get_available_times:
   "today" → now to end of today
   no preference → now to 5 days from now
 - The tool returns pre-selected times in "suggested_times" — use those exact times, do not pick different ones
-- Always include the timezone abbreviation shown in the formatted time (EDT, CDT, PDT, etc.)
+- Refer to times naturally, the way a person speaks. Each suggested time has a "natural" field already phrased for you ("tomorrow at 1:00 PM CDT", "this Thursday at 2:00 PM CDT", "next Monday at 10:00 AM CDT"). Use that phrasing — do NOT write rigid dates like "Monday, June 9 at 1:00 PM" unless the "natural" field itself uses a date (which only happens for times more than two weeks out).
+- The "natural" field already includes the timezone abbreviation — keep it so there's no ambiguity. Do not strip it.
 - Always refer to the meeting as "a quick 30-minute chat" or "a quick 30-minute Zoom"
 - After proposing times, always end with: "Happy to find another time if those don't work." or similar flexibility offer
 - If the prospect specified two separate day/time constraints (e.g. "Tuesday or Thursday afternoon"), make TWO separate calls with targeted ranges — one for each constraint. Do not use one wide range that includes irrelevant times in between.
@@ -408,6 +409,52 @@ function pickTwoSlots(
   return [a, b];
 }
 
+// Builds a natural, human-sounding reference to a slot relative to today,
+// e.g. "tomorrow at 1:00 PM CDT", "this Thursday at 2:00 PM CDT", "next Monday at 10:00 AM CDT".
+// Date math is done in code (in the prospect's timezone) so the day reference is always exact.
+function naturalTimePhrase(isoStart: string, now: Date, tz: string): string {
+  const slot = new Date(isoStart);
+  const time = new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+    timeZone: tz,
+  }).format(slot);
+
+  const weekday = new Intl.DateTimeFormat('en-US', {
+    weekday: 'long',
+    timeZone: tz,
+  }).format(slot);
+
+  // Calendar-date keys (YYYY-MM-DD) in the prospect's timezone, for an exact day diff.
+  const keyFmt = new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    timeZone: tz,
+  });
+  const slotKey = keyFmt.format(slot);
+  const todayKey = keyFmt.format(now);
+  const diffDays = Math.round((Date.parse(slotKey) - Date.parse(todayKey)) / 86400000);
+
+  let day: string;
+  if (diffDays === 0) day = 'today';
+  else if (diffDays === 1) day = 'tomorrow';
+  else if (diffDays >= 2 && diffDays <= 6) day = `this ${weekday}`;
+  else if (diffDays >= 7 && diffDays <= 13) day = `next ${weekday}`;
+  else {
+    // Far out — a relative reference would be confusing, so use the date.
+    day = new Intl.DateTimeFormat('en-US', {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      timeZone: tz,
+    }).format(slot);
+  }
+
+  return `${day} at ${time}`;
+}
+
 export interface AgentMocks {
   getAvailableTimes?: typeof getAvailableTimes;
   bookMeeting?: typeof bookMeeting;
@@ -459,19 +506,21 @@ async function executeToolWithRetry(
         picked = pickTwoSlots(slots);
       }
 
+      const nowForPhrase = new Date();
       const suggested = picked.map((s) => ({
         startTime: s.startTime,
         formatted: formatter.format(new Date(s.startTime)),
+        natural: naturalTimePhrase(s.startTime, nowForPhrase, tz),
       }));
 
-      console.log(`[agent] get_available_times returned ${slots.length} slots, suggesting: ${suggested.map(s => s.formatted).join(' | ')}`);
+      console.log(`[agent] get_available_times returned ${slots.length} slots, suggesting: ${suggested.map(s => s.natural).join(' | ')}`);
       return {
         data: {
           requested_time_available: requestedAvailable,
           suggested_times: suggested,
           instruction: requestedAvailable
-            ? 'The requested time is available. Confirm it.'
-            : 'Use exactly these suggested times in your reply. Do not pick different times.',
+            ? 'The requested time is available. Confirm it, referring to it naturally using its "natural" phrasing.'
+            : 'Refer to these exact slots in your reply, using the "natural" phrasing for each (e.g. "tomorrow at 1:00 PM CDT"). Do not pick different times.',
         },
       };
     }
