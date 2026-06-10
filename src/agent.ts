@@ -10,11 +10,15 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export interface AgentResult {
   action: 'draft' | 'no_reply' | 'hard_no' | 'ooo' | 'escalate';
   draft?: string;
-  booked?: boolean;
-  bookingDetails?: {
+  booked?: boolean; // true when a booking is PREPARED (not yet created — see pendingBooking)
+  // The meeting is NOT booked during processing. These params are carried to the Slack
+  // approval; the Calendly booking is created only when a human clicks Send.
+  pendingBooking?: {
     startTime: string;
-    rescheduleUrl?: string;
-    cancelUrl?: string;
+    name: string;
+    email: string;
+    timezone: string;
+    guests: string[];
   };
   returnDate?: string;
   reason?: string;
@@ -570,23 +574,21 @@ async function executeToolWithRetry(
     }
 
     if (name === 'book_meeting') {
-      const fn = mocks.bookMeeting ?? bookMeeting;
-      const booking = await fn({
-        startTime: input.start_time,
-        name: input.name,
-        email: input.email,
-        timezone: input.timezone,
-        guests: guestEmails,
-      });
+      // IMPORTANT: we do NOT create the Calendly booking here. Availability was already
+      // verified via get_available_times. The actual booking is created only when a human
+      // approves by clicking Send in Slack (see api/slack-action.ts). Here we just prepare
+      // the booking params so the agent can draft a confirmation and acknowledge guests.
       console.log(
-        `[agent] book_meeting succeeded: ${booking.startTime}` +
+        `[agent] book_meeting prepared (books on Send): ${input.start_time}` +
           (guestEmails.length ? ` (guests: ${guestEmails.join(', ')})` : ''),
       );
       return {
         data: {
           success: true,
-          startTime: booking.startTime,
-          rescheduleUrl: booking.rescheduleUrl,
+          startTime: input.start_time,
+          name: input.name,
+          email: input.email,
+          timezone: input.timezone,
           guests_added: guestEmails,
         },
         specialAction: undefined,
@@ -645,7 +647,7 @@ export async function runAgent(
   // Max realistic flow: 2x get_available_times + book_meeting + draft = 4 iterations.
   // 8 gives solid headroom for edge cases without risking runaway loops.
   const MAX_ITERATIONS = 8;
-  let bookedDetails: AgentResult['bookingDetails'] | undefined;
+  let pendingBooking: AgentResult['pendingBooking'] | undefined;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     console.log(`[agent] iteration ${i + 1}/${MAX_ITERATIONS}`);
@@ -686,8 +688,8 @@ export async function runAgent(
       return {
         action: 'draft',
         draft: cleaned,
-        booked: !!bookedDetails,
-        bookingDetails: bookedDetails,
+        booked: !!pendingBooking,
+        pendingBooking,
       };
     }
 
@@ -706,9 +708,12 @@ export async function runAgent(
         }
 
         if (block.name === 'book_meeting' && result.data?.success) {
-          bookedDetails = {
+          pendingBooking = {
             startTime: result.data.startTime,
-            rescheduleUrl: result.data.rescheduleUrl,
+            name: result.data.name,
+            email: result.data.email,
+            timezone: result.data.timezone,
+            guests: result.data.guests_added ?? [],
           };
         }
 

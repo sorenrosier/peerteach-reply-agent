@@ -39,11 +39,10 @@ const mockGetAvailableTimes = async (startTime: string, endTime: string): Promis
   return fakeSlotsForRange(startTime, endTime);
 };
 
-// Records the guests passed on the most recent booking so the report can show them.
-let lastBookingGuests: string[] = [];
-
+// NOTE: booking now happens at Send time (in api/slack-action.ts), not during the agent
+// run — so this mock is no longer invoked by runAgent. Guests are verified via
+// result.pendingBooking instead. Kept only to satisfy the AgentMocks shape.
 const mockBookMeeting = async (params: { startTime: string; name: string; email: string; timezone: string; guests?: string[] }): Promise<BookingResult> => {
-  lastBookingGuests = params.guests ?? [];
   return {
     uri: 'https://api.calendly.com/scheduled_events/MOCK/invitees/MOCK',
     startTime: params.startTime,
@@ -477,7 +476,6 @@ async function runAll() {
 
     let result;
     let error: string | undefined;
-    lastBookingGuests = [];
     try {
       result = await runAgent(scenario.payload, scenario.thread, MOCKS);
     } catch (err) {
@@ -510,9 +508,9 @@ async function runAll() {
     if (error) {
       lines.push(`**ERROR:** ${error}`);
     } else if (result) {
-      lines.push(`**Action:** \`${result.action}\`${result.booked ? ' (meeting booked)' : ''}`);
-      if (result.booked && lastBookingGuests.length) {
-        lines.push(`**Guests added to invite:** ${lastBookingGuests.join(', ')}`);
+      lines.push(`**Action:** \`${result.action}\`${result.booked ? ' (books on Send)' : ''}`);
+      if (result.booked && result.pendingBooking?.guests.length) {
+        lines.push(`**Guests added on Send:** ${result.pendingBooking.guests.join(', ')}`);
       }
       lines.push('');
 

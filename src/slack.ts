@@ -89,6 +89,23 @@ function replySubject(subject: string): string {
   return /^re:/i.test(s) ? s : `Re: ${s}`;
 }
 
+// Human-readable booking time for the Slack approval card, in the prospect's timezone.
+function formatBookingTime(startTimeIso: string, timezone: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      timeZoneName: 'short',
+      timeZone: timezone || 'America/New_York',
+    }).format(new Date(startTimeIso));
+  } catch {
+    return startTimeIso;
+  }
+}
+
 export async function postForHumanApproval(
   payload: InstantlyWebhookPayload,
   classification: ClassificationResult,
@@ -321,7 +338,7 @@ export async function postAgentDraft(
 ): Promise<void> {
   const draft = result.draft ?? '';
   const header = result.booked
-    ? ':white_check_mark: Meeting booked — confirm reply'
+    ? ':calendar: Reply ready — books the meeting when you click Send'
     : ':pencil2: Draft reply — needs approval';
 
   const buttonValue: SendReplyButtonValue = {
@@ -331,6 +348,7 @@ export async function postAgentDraft(
     body_text: draft,
     lead_email: payload.lead_email,
     campaign_id: payload.campaign_id,
+    ...(result.pendingBooking ? { booking: result.pendingBooking } : {}),
   };
   const valueStr = JSON.stringify(buttonValue);
   let finalValue = valueStr;
@@ -344,6 +362,14 @@ export async function postAgentDraft(
     lead_email: payload.lead_email,
     campaign_id: payload.campaign_id,
   });
+  // Edit & Send carries the booking flag so the handler can warn that the meeting
+  // isn't booked yet (it does not auto-book — the human may change the time).
+  const editValue = JSON.stringify({
+    email_id: payload.email_id,
+    lead_email: payload.lead_email,
+    campaign_id: payload.campaign_id,
+    ...(result.pendingBooking ? { booking: result.pendingBooking } : {}),
+  });
 
   const blocks: any[] = [
     { type: 'header', text: { type: 'plain_text', text: header, emoji: true } },
@@ -352,9 +378,9 @@ export async function postAgentDraft(
       type: 'section',
       text: { type: 'mrkdwn', text: `*Draft reply (from ${payload.email_account}):*\n${quoteBlock(draft, 2500)}` },
     },
-    ...(result.booked && result.bookingDetails ? [{
+    ...(result.booked && result.pendingBooking ? [{
       type: 'context',
-      elements: [{ type: 'mrkdwn', text: `:calendar: Booked for *${result.bookingDetails.startTime}*${result.bookingDetails.rescheduleUrl ? ` · <${result.bookingDetails.rescheduleUrl}|Reschedule link>` : ''}` }],
+      elements: [{ type: 'mrkdwn', text: `:calendar: *Will book on Send:* ${formatBookingTime(result.pendingBooking.startTime, result.pendingBooking.timezone)}${result.pendingBooking.guests.length ? `  ·  guests: ${result.pendingBooking.guests.join(', ')}` : ''}` }],
     }] : []),
     {
       type: 'section',
@@ -375,7 +401,7 @@ export async function postAgentDraft(
           type: 'button',
           text: { type: 'plain_text', text: ':pencil2: Edit & Send', emoji: true },
           action_id: 'edit_send',
-          value: skipValue,
+          value: editValue,
           url: payload.unibox_url,
         },
         {

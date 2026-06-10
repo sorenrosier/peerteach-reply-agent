@@ -14,11 +14,13 @@ export type AgentAction = 'draft' | 'no_reply' | 'hard_no' | 'ooo' | 'escalate';
 export interface AgentResult {
   action: AgentAction;
   draft?: string;
-  booked?: boolean;
-  bookingDetails?: {
+  booked?: boolean; // true when a booking is PREPARED (created only on Send approval)
+  pendingBooking?: {
     startTime: string;
-    rescheduleUrl?: string;
-    cancelUrl?: string;
+    name: string;
+    email: string;
+    timezone: string;
+    guests: string[];
   };
   returnDate?: string;
   reason?: string;
@@ -85,4 +87,12 @@ export interface SendReplyButtonValue {
   body_text: string;
   lead_email: string;
   campaign_id: string;
+  // When present, the Calendly meeting is booked at Send time (before the reply is sent).
+  booking?: {
+    startTime: string;
+    name: string;
+    email: string;
+    timezone: string;
+    guests: string[];
+  };
 }

@@ -2,6 +2,7 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import crypto from 'crypto';
 import { env, validateEnv } from '../src/env';
 import { replyToEmail } from '../src/instantly';
+import { bookMeeting } from '../src/calendly';
 import { updateViaResponseUrl } from '../src/slack';
 import { SendReplyButtonValue, SlackActionPayload } from '../src/types';
 
@@ -131,6 +132,28 @@ async function processAction(
         );
         return;
       }
+      // Book the Calendly meeting FIRST (only happens on this affirmative Send — never on Skip).
+      // If booking fails (e.g. the slot was taken since the draft was created), do NOT send
+      // the confirmation reply — surface the failure so a human can handle it.
+      if (parsed.booking) {
+        try {
+          await bookMeeting({
+            startTime: parsed.booking.startTime,
+            name: parsed.booking.name,
+            email: parsed.booking.email,
+            timezone: parsed.booking.timezone,
+            guests: parsed.booking.guests,
+          });
+          console.log('[slack-action] booked on send:', parsed.booking.startTime, 'guests:', parsed.booking.guests.join(', ') || 'none');
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          await updateViaResponseUrl(
+            payload.response_url,
+            `:warning: Could not book the meeting (\`${msg}\`). The slot may no longer be available. Reply NOT sent — please handle manually in Unibox.`,
+          );
+          return;
+        }
+      }
       try {
         await replyToEmail({
           reply_to_uuid: parsed.email_id,
@@ -163,9 +186,18 @@ async function processAction(
     }
 
     case 'edit_send': {
+      // Manual takeover in Unibox — we do NOT auto-book here, because the human may change
+      // the time while editing. If the reply confirms a meeting, warn them to book it.
+      let hasBooking = false;
+      try {
+        hasBooking = !!(JSON.parse(action.value) as Partial<SendReplyButtonValue>).booking;
+      } catch {}
+      const note = hasBooking
+        ? ' :warning: This reply confirms a meeting that is NOT booked yet. Book it in Calendly manually, or use *Send Reply* to auto-book.'
+        : '';
       await updateViaResponseUrl(
         payload.response_url,
-        `:pencil2: Opened in Unibox for manual edit at ${now}.`,
+        `:pencil2: Opened in Unibox for manual edit at ${now}.${note}`,
       );
       return;
     }
