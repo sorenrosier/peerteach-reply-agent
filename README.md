@@ -32,6 +32,8 @@ The agent reasons dynamically. If a prospect says "2 weeks from now," it fetches
 
 **Time references are natural.** Instead of "Monday, June 9 at 1:00 PM CDT," the agent says "tomorrow at 1:00 PM CDT" or "this Thursday at 2:00 PM CDT." The relative day is computed in code in the prospect's timezone, so it is always exact.
 
+**Colleagues are added automatically.** When a prospect CCs other people or says colleagues will attend, the system adds everyone else on the latest email (to/cc/from, minus your own account and the primary invitee) to the Calendly booking as guests (`event_guests`). This is done in code, not by the model — no judgment, no need for the agent to ask for emails.
+
 ---
 
 ## Routing logic
@@ -277,12 +279,13 @@ Tests use real Claude API calls but mock Calendly — no bookings created:
 npx ts-node scripts/testScenarios.ts
 ```
 
-Results are written to `scripts/test-results.md`. Covers 25 scenarios including scheduling, booking, soft no, wrong person, referrals, timezones, and multi-turn conversations.
+Results are written to `scripts/test-results.md`. Covers 26 scenarios including scheduling, booking, soft no, wrong person, referrals, timezones, CC'd colleagues, and multi-turn conversations.
 
-To verify the natural time-phrasing logic (today/tomorrow/this Thursday, timezone boundaries, no-DST Arizona) without any API calls:
+Two offline tests run the deterministic logic with no API calls:
 
 ```bash
-npx ts-node scripts/verifyNaturalTime.ts
+npx ts-node scripts/verifyNaturalTime.ts   # today/tomorrow/this Thursday, timezone boundaries, no-DST Arizona
+npx ts-node scripts/verifyGuests.ts        # auto-adding CC'd colleagues as Calendly guests
 ```
 
 ---
@@ -332,8 +335,9 @@ src/
   types.ts            TypeScript types shared across the codebase
 
 scripts/
-  testScenarios.ts        25-scenario test suite (mocked Calendly, real Claude)
+  testScenarios.ts        26-scenario test suite (mocked Calendly, real Claude)
   verifyNaturalTime.ts    Offline test for natural time phrasing (no API calls)
+  verifyGuests.ts         Offline test for auto-adding CC'd colleagues as guests
   test-results.md         Output from the last test run
 ```
 
