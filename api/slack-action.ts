@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { waitUntil } from '@vercel/functions';
 import crypto from 'crypto';
 import { env, validateEnv } from '../src/env';
 import { replyToEmail } from '../src/instantly';
@@ -6,13 +7,22 @@ import { bookMeeting } from '../src/calendly';
 import { updateViaResponseUrl } from '../src/slack';
 import { SendReplyButtonValue, SlackActionPayload } from '../src/types';
 
-// Read raw body from the underlying IncomingMessage buffer Vercel attaches.
+// Disable Vercel's automatic body parser. Slack signs the RAW request body, so we must
+// read the bytes ourselves before anything consumes the stream — otherwise the signature
+// can never be verified and every button click 401s.
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
+
+// Read the raw request body straight off the stream. The body parser is disabled (see
+// `config` above), so the stream is intact here.
 async function getRawBody(req: VercelRequest): Promise<string> {
-  // Vercel attaches the raw body buffer to req before parsing
+  // If something upstream already buffered the raw body, use it.
   const raw = (req as any).rawBody ?? (req as any)._body;
   if (raw) return typeof raw === 'string' ? raw : raw.toString('utf8');
 
-  // Fallback: read from stream (works if body hasn't been consumed)
   return new Promise((resolve, reject) => {
     let data = '';
     req.setEncoding('utf8');
@@ -42,10 +52,16 @@ function verifySlackSignature(
   return crypto.timingSafeEqual(a, b);
 }
 
-function parsePayload(body: any): SlackActionPayload | null {
-  // Vercel parses form body into { payload: '<json string>' }
-  const payloadStr =
-    typeof body?.payload === 'string' ? body.payload : null;
+// Slack sends interactive payloads as application/x-www-form-urlencoded with a single
+// `payload` field holding a JSON string. With the body parser disabled we parse the raw
+// body ourselves so the exact bytes used for signature verification are reused here.
+function parsePayload(rawBody: string): SlackActionPayload | null {
+  let payloadStr: string | null = null;
+  try {
+    payloadStr = new URLSearchParams(rawBody).get('payload');
+  } catch {
+    payloadStr = null;
+  }
   if (!payloadStr) return null;
   try {
     return JSON.parse(payloadStr) as SlackActionPayload;
@@ -83,19 +99,18 @@ export default async function handler(
     return;
   }
 
-  const payload = parsePayload(req.body);
+  const payload = parsePayload(rawBody);
   if (!payload || !Array.isArray(payload.actions) || payload.actions.length === 0) {
-    console.warn('[slack-action] invalid payload', JSON.stringify(req.body).slice(0, 200));
+    console.warn('[slack-action] invalid payload', rawBody.slice(0, 200));
     res.status(400).json({ error: 'Invalid Slack payload' });
     return;
   }
 
-  // Process first, then respond. Vercel kills the function immediately after res.end(),
-  // so all work must complete before sending the response.
-  // Slack allows up to 3 seconds — skip/edit are instant, send_reply is ~1-2s.
-  try {
-    await processAction(payload.actions[0], payload);
-  } catch (err) {
+  // Acknowledge Slack IMMEDIATELY (within its 3-second window) so it doesn't time out,
+  // show the user an error, or re-deliver the click. A Send that books a meeting AND sends
+  // the reply takes longer than 3s (Calendly + Instantly), so we do that work in the
+  // background via waitUntil and report the result by editing the message via response_url.
+  const work = processAction(payload.actions[0], payload).catch(async (err) => {
     console.error(
       '[slack-action] processAction failed',
       err instanceof Error ? err.stack : String(err),
@@ -106,7 +121,9 @@ export default async function handler(
         `:warning: Action failed: ${err instanceof Error ? err.message : String(err)}`,
       );
     } catch {}
-  }
+  });
+  // Keep the function alive until the background work finishes (up to maxDuration).
+  waitUntil(work);
 
   res.status(200).end();
 }

@@ -25,7 +25,22 @@ async function instantlyRequest<T = any>(
   } catch (err) {
     const ax = err as AxiosError;
     const status = ax.response?.status;
-    const retriable = status === 429 || (status !== undefined && status >= 500);
+    // No response at all (timeout / connection reset / DNS) → no status. Only retry these
+    // for idempotent GETs. Never auto-retry a POST after a timeout: the request may have
+    // actually succeeded server-side (e.g. /emails/reply), so retrying risks a duplicate
+    // email or booking.
+    const method = (config.method || 'GET').toString().toUpperCase();
+    const noResponse =
+      ax.response === undefined &&
+      (ax.code === 'ECONNABORTED' ||
+        ax.code === 'ETIMEDOUT' ||
+        ax.code === 'ECONNRESET' ||
+        ax.code === 'ENOTFOUND' ||
+        ax.message.toLowerCase().includes('timeout'));
+    const retriable =
+      status === 429 ||
+      (status !== undefined && status >= 500) ||
+      (noResponse && method === 'GET');
     if (retriable && attempt < 3) {
       const backoff = 500 * Math.pow(2, attempt) + Math.floor(Math.random() * 250);
       console.warn(
