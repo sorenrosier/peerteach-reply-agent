@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { env } from './env';
-import { getAvailableTimes, bookMeeting } from './calendly';
+import { env, envOptional } from './env';
+import { getAvailableTimes, bookMeeting, CalendlySlot } from './calendly';
+import { getBusyMeetings, wouldExceedConsecutiveMeetings } from './googleCalendar';
 import { InstantlyWebhookPayload } from './types';
 
 const MODEL = 'claude-sonnet-4-6';
@@ -558,7 +559,33 @@ async function executeToolWithRetry(
     if (name === 'get_available_times') {
       const tz = (input.timezone as string) || 'America/New_York';
       const fn = mocks.getAvailableTimes ?? getAvailableTimes;
-      const slots = await fn(input.start_time, input.end_time);
+      const rawSlots = await fn(input.start_time, input.end_time);
+
+      // Deprioritize slots that would create 4+ back-to-back meetings on Katie's calendar
+      // (no break >= MEETING_BREAK_MINUTES). Fails open: if the Google Calendar check
+      // errors or isn't configured, we skip filtering rather than block scheduling.
+      let slots: CalendlySlot[] = rawSlots;
+      if (envOptional('GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON')) {
+        try {
+          const bufferMs = 4 * 60 * 60 * 1000;
+          const rangeStart = new Date(new Date(input.start_time).getTime() - bufferMs).toISOString();
+          const rangeEnd = new Date(new Date(input.end_time).getTime() + bufferMs).toISOString();
+          const existingMeetings = await getBusyMeetings(rangeStart, rangeEnd);
+          const uncluttered = rawSlots.filter((s) => {
+            const end = new Date(new Date(s.startTime).getTime() + 30 * 60 * 1000).toISOString();
+            return !wouldExceedConsecutiveMeetings(existingMeetings, s.startTime, end);
+          });
+          // Only apply the filter if it leaves at least one option — never tell the
+          // prospect nothing is available just because every slot is clustered.
+          if (uncluttered.length > 0) slots = uncluttered;
+        } catch (err) {
+          console.warn(
+            '[agent] Google Calendar clustering check failed, skipping:',
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+      }
+
       const formatter = new Intl.DateTimeFormat('en-US', {
         weekday: 'long',
         month: 'long',
