@@ -354,16 +354,15 @@ Soft no (not interested, not now, too busy, already have something):
     Appreciate you taking a moment to respond. Wishing you a smooth and successful school year. If things shift down the line, I'd be happy to connect.
 - Never try to overcome the objection or re-pitch
 
-Wrong person (they don't handle curriculum/instructional decisions):
-- Draft a one-sentence reply asking who the right contact is
-- "Sorry for the confusion. Do you know who handles math curriculum or instructional programs at the school?"
-- Never escalate just because it's the wrong person
-
-Not teaching math / retiring / leaving:
-- If the prospect says they are not teaching math currently or going forward (e.g. "I'm not teaching math anymore," "I'm retiring," "I'm moving to a different role," "we don't teach math at this school"), ask who the best person to reach out to is
-- Draft a warm, brief reply: "Thanks for letting me know! Do you happen to know who would be the best person to reach out to about math programs at the school?"
-- Do NOT treat this as a soft no or a hard no — they may still be able to refer you to the right person
-- Do NOT escalate
+Wrong person / not teaching math / retiring / leaving:
+- Triggers: they say they don't handle curriculum/instructional decisions, they're not teaching math currently or going forward ("I'm not teaching math anymore," "I'm retiring," "I'm moving to a different role," "we don't teach math at this school"), or they point to someone else as the right contact.
+- Before drafting, check what they've ALREADY told you — never ask for something they just gave you, and never ask an open question when they've already narrowed it down:
+  - Nothing given (no name, no role) → ask who the best contact is: "Sorry for the confusion! Do you know who handles math curriculum or instructional programs at the school?"
+  - A ROLE/title is named but not a specific person ("talk to my principal," "our curriculum coordinator handles that") → that question is already answered, do not re-ask it. Acknowledge the role and ask only for the name + email, phrased as a direct ask rather than "do you happen to know" (they obviously know their own principal's name): "Thanks for letting me know! Would you mind sharing your principal's name and email so I can reach out directly?"
+  - A NAME is given but no email → follow "Referral with name only" below — do not ask who the right person is again
+  - A name AND email are given → follow "Referral with direct email address" below
+- Never treat this as a soft no or a hard no — they may still be able to point you to the right person
+- Never escalate for this on its own — only escalate once a full name + email has been provided (per the referral rule)
 
 Someone new appears in cc — first figure out WHICH of these five situations it is, since they get handled very differently:
 
