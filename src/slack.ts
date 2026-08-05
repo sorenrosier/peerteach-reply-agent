@@ -210,6 +210,7 @@ export async function postForHumanApproval(
 export async function postEscalateNotification(
   payload: InstantlyWebhookPayload,
   classification: ClassificationResult,
+  suggestedReply?: string,
 ): Promise<void> {
   const blocks: any[] = [
     {
@@ -224,6 +225,65 @@ export async function postEscalateNotification(
         text: `*Full reply:*\n${quoteBlock(payload.reply_text || payload.reply_text_snippet || '', 2500)}`,
       },
     },
+  ];
+
+  const actionsElements: any[] = [];
+
+  if (suggestedReply && suggestedReply.trim()) {
+    const buttonValue: SendReplyButtonValue = {
+      email_id: payload.email_id,
+      eaccount: payload.email_account,
+      subject: replySubject(payload.reply_subject || payload.email_subject || ''),
+      body_text: suggestedReply,
+      lead_email: payload.lead_email,
+      campaign_id: payload.campaign_id,
+    };
+    const valueStr = JSON.stringify(buttonValue);
+    let finalValue = valueStr;
+    if (valueStr.length > 1900) {
+      const overhead = valueStr.length - buttonValue.body_text.length;
+      const room = 1900 - overhead - 20;
+      finalValue = JSON.stringify({ ...buttonValue, body_text: buttonValue.body_text.slice(0, Math.max(0, room)) });
+    }
+    const skipValue = JSON.stringify({
+      email_id: payload.email_id,
+      lead_email: payload.lead_email,
+      campaign_id: payload.campaign_id,
+    });
+
+    blocks.push({
+      type: 'section',
+      text: { type: 'mrkdwn', text: `*Suggested reply (needs human review before sending):*\n${quoteBlock(suggestedReply, 2500)}` },
+    });
+
+    actionsElements.push(
+      {
+        type: 'button',
+        style: 'primary',
+        text: { type: 'plain_text', text: ':white_check_mark: Send Reply', emoji: true },
+        action_id: 'send_reply',
+        value: finalValue,
+      },
+      {
+        type: 'button',
+        text: { type: 'plain_text', text: ':pencil2: Edit & Send', emoji: true },
+        action_id: 'edit_send',
+        value: skipValue,
+        url: payload.unibox_url,
+      },
+      {
+        type: 'button',
+        style: 'danger',
+        text: { type: 'plain_text', text: ':x: Skip', emoji: true },
+        action_id: 'skip',
+        value: skipValue,
+      },
+    );
+  }
+
+  actionsElements.push(uniboxButton(payload));
+
+  blocks.push(
     {
       type: 'context',
       elements: [
@@ -233,8 +293,9 @@ export async function postEscalateNotification(
         },
       ],
     },
-    { type: 'actions', elements: [uniboxButton(payload)] },
-  ];
+    { type: 'actions', elements: actionsElements },
+  );
+
   await postMessage(blocks, `Escalation from ${payload.lead_email}`);
 }
 

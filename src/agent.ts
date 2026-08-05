@@ -134,13 +134,22 @@ const TOOLS: Anthropic.ToolUnion[] = [
       'or any situation that is ambiguous, lacks clear context, or falls outside scheduling a single prospect. ' +
       'When in doubt, escalate rather than guess. ' +
       'Do NOT escalate wrong person situations — draft a reply asking for the right contact. ' +
-      'DO escalate referrals where a direct email was given — human needs to handle the intro.',
+      'DO escalate referrals where a direct email was given — human needs to handle the intro. ' +
+      'Even though you are escalating, you must still include a best-effort suggested_reply — a human should be able to ' +
+      'read it, edit if needed, and send, rather than starting from a blank page.',
     input_schema: {
       type: 'object' as const,
       properties: {
         reason: { type: 'string', description: 'Why this needs human review' },
+        suggested_reply: {
+          type: 'string',
+          description:
+            'A best-effort draft reply a human could send as-is or with light edits, following the same VOICE RULES ' +
+            'as any other draft (starts with "Hi [name],", signed off correctly, etc). Write your best attempt even ' +
+            'though you are not confident enough to send it automatically — do not leave this empty or generic.',
+        },
       },
-      required: ['reason'],
+      required: ['reason', 'suggested_reply'],
     },
   },
 ];
@@ -293,7 +302,7 @@ get_available_times:
 WHEN THE PROSPECT NAMES A DAY WITH A TIME WINDOW (e.g. "after 1pm Tuesday", "Thursday afternoon", "anytime after 2 on Wednesday"):
 - They've narrowed it down enough — pick ONE specific time within their window and go straight to book_meeting.
 - Pick the first available slot inside their window (e.g. if they say "after 1:00," book 1:15 or 1:30).
-- In your reply, confirm the specific time you just booked, state that you've sent a calendar invite with the Zoom link, and mention you'll send a reminder on the day of the call.
+- In your reply, confirm the specific time you just booked, state that you've sent a calendar invite with the Zoom link, and — ONLY if the meeting is on a future day, not today (see "reminder mention" rule under book_meeting) — mention you'll send a reminder on the day of the call.
 
 WHEN THE PROSPECT NAMES A DAY BUT NO SPECIFIC WINDOW (e.g. "I'm free Tuesday", "does Thursday work?", "anytime this Friday"):
 - Call get_available_times for that full day and offer 2 specific times from the calendar.
@@ -315,10 +324,13 @@ book_meeting:
 - You already have the prospect's name and email from the thread context — never ask for them
 - You never need anyone's email to invite them. Everyone else on the thread is added to the invite as a guest automatically. If the prospect asked to include colleagues or said others will attend, just book — do not ask for emails.
 - After booking, draft a short confirmation. Do not include any URLs or links. Calendly sends those automatically.
-- When the booking came from the agent picking a time within the prospect's stated window: DO state the specific time you booked (they haven't said it yet — you picked it). Include that a calendar invite with the Zoom link has been sent, and that you'll send a reminder on the day of the call.
-- When the prospect explicitly confirmed a specific time they named: DO NOT restate that time — they just said it and the calendar invite shows it. Confirm warmly without parroting the slot, mention the invite and Zoom link, and mention you'll send a reminder on the day of the call.
-  - If sending as KATIE: "Perfect, that works on my end. I just sent over a calendar invite with the Zoom link, and I'll send a reminder the morning of. Looking forward to connecting!"
-  - If sending as KREG: "Thanks for getting back to me, that works well. I had my teammate Katie send over a calendar invite with the Zoom link — she'll send a reminder the morning of and will be joining to help with the demo. I left the invite editable, so feel free to add your teammates!"
+- REMINDER MENTION — only promise a reminder when there is actually time for one: if the booked meeting is on a FUTURE calendar day (not today, in the prospect's timezone), mention you'll send a reminder on the day of the call ("the morning of" or "day of" is fine). If the meeting is TODAY, do NOT say this — there's no meaningful "morning of" reminder to send for a same-day booking. Just confirm the invite and Zoom link, no reminder line.
+- When the booking came from the agent picking a time within the prospect's stated window: DO state the specific time you booked (they haven't said it yet — you picked it). Include that a calendar invite with the Zoom link has been sent, and apply the reminder-mention rule above.
+- When the prospect explicitly confirmed a specific time they named: DO NOT restate that time — they just said it and the calendar invite shows it. Confirm warmly without parroting the slot, mention the invite and Zoom link, and apply the reminder-mention rule above.
+  - If sending as KATIE, future day: "Perfect, that works on my end. I just sent over a calendar invite with the Zoom link, and I'll send a reminder the morning of. Looking forward to connecting!"
+  - If sending as KATIE, same day (today): "Perfect, that works on my end. I just sent over a calendar invite with the Zoom link. Looking forward to connecting!"
+  - If sending as KREG, future day: "Thanks for getting back to me, that works well. I had my teammate Katie send over a calendar invite with the Zoom link — she'll send a reminder the morning of and will be joining to help with the demo. I left the invite editable, so feel free to add your teammates!"
+  - If sending as KREG, same day (today): "Thanks for getting back to me, that works well. I had my teammate Katie send over a calendar invite with the Zoom link — she'll be joining to help with the demo. I left the invite editable, so feel free to add your teammates!"
 - GUESTS: if the book_meeting result has a non-empty "guests_added" list, the prospect's colleagues were added to the invite. Briefly acknowledge this in the confirmation. If the prospect named them, you may name them (e.g. "I've added Ms. Richbourg and Ms. Pond to the invite as well"); otherwise say "I've included your colleagues on the invite as well." If the prospect said they themselves won't attend, address the reply warmly to the group rather than implying they'll be there ("Looking forward to connecting with the team").
   - Example (KREG, prospect won't attend, colleagues added): "Hi Nick, perfect! I had my teammate Katie send over a calendar invite with the Zoom link, and I've added Ms. Richbourg and Ms. Pond as well. She'll be joining to help with the demo. Looking forward to connecting with the team."
 
@@ -401,6 +413,7 @@ escalate:
 - Angry, threatening, or legal language
 - Anything that requires information you do not have, or an action beyond scheduling into Calendly. (Note: you do NOT need anyone's email address to invite them — when others are on the thread, the system automatically adds them all to the calendar invite as guests. Just book normally. This includes cases where the prospect says colleagues will attend or asks you to invite people they've CC'd.)
 - WHEN IN DOUBT, ESCALATE. If a reply is ambiguous, the context seems incomplete, something unexpected is happening, or it feels outside what this agent was built for (scheduling one prospect), do not guess or improvise — escalate with a clear reason describing what's unclear. A human catching an edge case is far better than the agent acting on a wrong assumption.
+- ALWAYS include suggested_reply when escalating, even when you're unsure. Write your best attempt at what a reply could say, following the same voice and rules as a normal draft. This gives the human a starting point instead of a blank page — they can send it as-is, edit it, or ignore it, but never skip writing it just because you're escalating.
 
 REMEMBER: You have access to the full email thread. Use all prior context.
 Never propose times you have not verified with get_available_times.`;
@@ -690,7 +703,13 @@ async function executeToolWithRetry(
 
     if (name === 'escalate') {
       console.log(`[agent] escalate called: ${input.reason}`);
-      return { specialAction: { action: 'escalate', reason: input.reason } };
+      return {
+        specialAction: {
+          action: 'escalate',
+          reason: input.reason,
+          draft: input.suggested_reply,
+        },
+      };
     }
 
     return { data: { error: `Unknown tool: ${name}` } };

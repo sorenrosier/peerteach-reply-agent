@@ -47,12 +47,16 @@ export async function routeReply(payload: InstantlyWebhookPayload): Promise<void
         return;
 
       case 'escalate':
-        await postEscalateNotification(payload, {
-          classification: 'ESCALATE',
-          confidence: 0,
-          reasoning: result.reason ?? 'Agent escalated',
-          extractedInfo: {},
-        });
+        await postEscalateNotification(
+          payload,
+          {
+            classification: 'ESCALATE',
+            confidence: 0,
+            reasoning: result.reason ?? 'Agent escalated',
+            extractedInfo: {},
+          },
+          result.draft,
+        );
         return;
 
       case 'draft':
