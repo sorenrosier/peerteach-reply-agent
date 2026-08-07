@@ -161,10 +161,6 @@ async function processAction(
         );
         return;
       }
-      // A human is acting on this lead now — any tentative holds from earlier proposals
-      // are moot regardless of what happens next.
-      await releaseHolds(parsed.lead_email, parsed.campaign_id);
-
       // Book the Calendly meeting FIRST (only happens on this affirmative Send — never on Skip).
       // If booking fails (e.g. the slot was taken since the draft was created), do NOT send
       // the confirmation reply — surface the failure so a human can handle it.
@@ -178,6 +174,9 @@ async function processAction(
             guests: parsed.booking.guests,
           });
           console.log('[slack-action] booked on send:', parsed.booking.startTime, 'guests:', parsed.booking.guests.join(', ') || 'none');
+          // A specific time is now really booked in Calendly — the tentative hold(s) for
+          // this lead (the chosen slot, and any unclaimed alternate) are no longer needed.
+          await releaseHolds(parsed.lead_email, parsed.campaign_id);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           await updateViaResponseUrl(
@@ -227,7 +226,9 @@ async function processAction(
         editParsed = JSON.parse(action.value) as Partial<SendReplyButtonValue>;
         hasBooking = !!(editParsed as Partial<SendReplyButtonValue>).booking;
       } catch {}
-      if (editParsed.lead_email && editParsed.campaign_id) {
+      // Only release holds if this draft was confirming a specific booking — a plain
+      // "offering times" draft being edited should keep its holds, same as Send Reply.
+      if (hasBooking && editParsed.lead_email && editParsed.campaign_id) {
         await releaseHolds(editParsed.lead_email, editParsed.campaign_id);
       }
       const note = hasBooking

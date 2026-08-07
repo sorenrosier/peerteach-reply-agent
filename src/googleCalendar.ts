@@ -102,9 +102,9 @@ export async function getBusyMeetings(startIso: string, endIso: string): Promise
     .filter((e) => e.status !== 'cancelled')
     .filter((e) => e.start?.dateTime && e.end?.dateTime) // skip all-day events
     .filter((e) => !NON_MEETING_PATTERN.test(e.summary || ''))
-    // Tentative scheduling holds are not real meetings — most never convert into a
-    // booking, so they should not count toward back-to-back meeting fatigue.
-    .filter((e) => e.extendedProperties?.private?.peerteach_hold !== 'true')
+    // Tentative holds DO count toward the back-to-back spacing check — if several of
+    // them convert into real bookings, we don't want to discover the clustering only
+    // after the fact. Better to steer new proposals away from an at-risk slot now.
     .map((e) => ({
       start: e.start.dateTime,
       end: e.end.dateTime,
@@ -134,9 +134,9 @@ export async function createHold(params: {
         start: { dateTime: params.startIso },
         end: { dateTime: params.endIso },
         transparency: 'opaque', // shows as busy so Calendly's sync picks it up
-        // Google Calendar colorId '5' = Banana (yellow) — makes tentative holds visually
-        // distinct from real meetings at a glance, without looking alarming like red.
-        colorId: '5',
+        // Google Calendar colorId '11' = Tomato (red) — makes tentative holds visually
+        // distinct from real meetings at a glance.
+        colorId: '11',
         extendedProperties: {
           private: {
             peerteach_hold: 'true',

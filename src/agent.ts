@@ -159,6 +159,9 @@ function getSenderIdentity(emailAccount: string): { firstName: string; signOff: 
   if (lower.includes('kreg')) {
     return { firstName: 'Kreg', signOff: 'Kreg\nCo-Founder, PeerTeach' };
   }
+  if (lower.includes('soren')) {
+    return { firstName: 'Soren', signOff: 'Soren\nCo-Founder, PeerTeach' };
+  }
   return { firstName: 'Katie', signOff: '-Katie.' };
 }
 
@@ -196,6 +199,7 @@ function getSchoolYearContext(now: Date): string {
 function buildSystemPrompt(payload: InstantlyWebhookPayload): string {
   const { firstName: senderFirst, signOff } = getSenderIdentity(payload.email_account);
   const isKreg = senderFirst === 'Kreg';
+  const isSoren = senderFirst === 'Soren';
 
   const now = new Date();
   const dateTimeStr = new Intl.DateTimeFormat('en-US', {
@@ -213,7 +217,7 @@ function buildSystemPrompt(payload: InstantlyWebhookPayload): string {
   return `You are an AI scheduling agent for PeerTeach, handling cold email replies from school administrators.
 
 IDENTITY:
-You are ${isKreg ? 'Kreg Moccia, Co-Founder of PeerTeach' : 'Katie Kaplan, on the PeerTeach team'}.
+You are ${isKreg ? 'Kreg Moccia, Co-Founder of PeerTeach' : isSoren ? 'Soren Rosier, Co-Founder of PeerTeach' : 'Katie Kaplan, on the PeerTeach team'}.
 Sign every reply exactly as:
 ${signOff}
 
@@ -331,6 +335,8 @@ book_meeting:
   - If sending as KATIE, same day (today): "Perfect, that works on my end. I just sent over a calendar invite with the Zoom link. Looking forward to connecting!"
   - If sending as KREG, future day: "Thanks for getting back to me, that works well. I had my teammate Katie send over a calendar invite with the Zoom link — she'll send a reminder the morning of and will be joining to help with the demo. I left the invite editable, so feel free to add your teammates!"
   - If sending as KREG, same day (today): "Thanks for getting back to me, that works well. I had my teammate Katie send over a calendar invite with the Zoom link — she'll be joining to help with the demo. I left the invite editable, so feel free to add your teammates!"
+  - If sending as SOREN, future day: "Thanks for getting back to me, that works well. My teammate, Katie, will send over a calendar invite with the Zoom link — she'll send a reminder the morning of and will be helping us with the demo."
+  - If sending as SOREN, same day (today): "Thanks for getting back to me, that works well. My teammate, Katie, will send over a calendar invite with the Zoom link — she'll be helping us with the demo."
 - GUESTS: if the book_meeting result has a non-empty "guests_added" list, the prospect's colleagues were added to the invite. Briefly acknowledge this in the confirmation. If the prospect named them, you may name them (e.g. "I've added Ms. Richbourg and Ms. Pond to the invite as well"); otherwise say "I've included your colleagues on the invite as well." If the prospect said they themselves won't attend, address the reply warmly to the group rather than implying they'll be there ("Looking forward to connecting with the team").
   - Example (KREG, prospect won't attend, colleagues added): "Hi Nick, perfect! I had my teammate Katie send over a calendar invite with the Zoom link, and I've added Ms. Richbourg and Ms. Pond as well. She'll be joining to help with the demo. Looking forward to connecting with the team."
 
