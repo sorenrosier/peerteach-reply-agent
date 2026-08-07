@@ -1,11 +1,23 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { waitUntil } from '@vercel/functions';
 import crypto from 'crypto';
-import { env, validateEnv } from '../src/env';
+import { env, envOptional, validateEnv } from '../src/env';
 import { replyToEmail } from '../src/instantly';
 import { bookMeeting } from '../src/calendly';
+import { deleteHoldsForLead } from '../src/googleCalendar';
 import { updateViaResponseUrl } from '../src/slack';
 import { SendReplyButtonValue, SlackActionPayload } from '../src/types';
+
+// A human decided what happens with this lead — clear any tentative calendar holds from
+// prior proposals regardless of the outcome (sent, edited elsewhere, or skipped). Fails open.
+async function releaseHolds(leadEmail: string, campaignId: string): Promise<void> {
+  if (!envOptional('GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON')) return;
+  try {
+    await deleteHoldsForLead(leadEmail, campaignId);
+  } catch (err) {
+    console.warn('[slack-action] releaseHolds failed:', err instanceof Error ? err.message : String(err));
+  }
+}
 
 // Disable Vercel's automatic body parser. Slack signs the RAW request body, so we must
 // read the bytes ourselves before anything consumes the stream — otherwise the signature
@@ -149,6 +161,10 @@ async function processAction(
         );
         return;
       }
+      // A human is acting on this lead now — any tentative holds from earlier proposals
+      // are moot regardless of what happens next.
+      await releaseHolds(parsed.lead_email, parsed.campaign_id);
+
       // Book the Calendly meeting FIRST (only happens on this affirmative Send — never on Skip).
       // If booking fails (e.g. the slot was taken since the draft was created), do NOT send
       // the confirmation reply — surface the failure so a human can handle it.
@@ -206,9 +222,14 @@ async function processAction(
       // Manual takeover in Unibox — we do NOT auto-book here, because the human may change
       // the time while editing. If the reply confirms a meeting, warn them to book it.
       let hasBooking = false;
+      let editParsed: { lead_email?: string; campaign_id?: string } = {};
       try {
-        hasBooking = !!(JSON.parse(action.value) as Partial<SendReplyButtonValue>).booking;
+        editParsed = JSON.parse(action.value) as Partial<SendReplyButtonValue>;
+        hasBooking = !!(editParsed as Partial<SendReplyButtonValue>).booking;
       } catch {}
+      if (editParsed.lead_email && editParsed.campaign_id) {
+        await releaseHolds(editParsed.lead_email, editParsed.campaign_id);
+      }
       const note = hasBooking
         ? ' :warning: This reply confirms a meeting that is NOT booked yet. Book it in Calendly manually, or use *Send Reply* to auto-book.'
         : '';
@@ -220,6 +241,12 @@ async function processAction(
     }
 
     case 'skip': {
+      try {
+        const skipParsed = JSON.parse(action.value) as { lead_email?: string; campaign_id?: string };
+        if (skipParsed.lead_email && skipParsed.campaign_id) {
+          await releaseHolds(skipParsed.lead_email, skipParsed.campaign_id);
+        }
+      } catch {}
       const userTag = payload.user?.id ? `<@${payload.user.id}>` : 'a teammate';
       await updateViaResponseUrl(
         payload.response_url,

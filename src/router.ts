@@ -1,5 +1,7 @@
 import { runAgent } from './agent';
 import { replyToEmail, fetchEmailThread } from './instantly';
+import { deleteHoldsForLead } from './googleCalendar';
+import { envOptional } from './env';
 import {
   postAgentDraft,
   postEscalateNotification,
@@ -10,6 +12,17 @@ import { InstantlyWebhookPayload } from './types';
 
 export async function routeReply(payload: InstantlyWebhookPayload): Promise<void> {
   console.log(`[router] lead=${payload.lead_email} campaign=${payload.campaign_id}`);
+
+  // A new reply means any calendar holds from prior offers to this lead are now stale —
+  // whatever they said (confirmed a time, asked for different times, or something else
+  // entirely), clear them before the agent decides what's next. Fails open.
+  if (envOptional('GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON')) {
+    try {
+      await deleteHoldsForLead(payload.lead_email, payload.campaign_id);
+    } catch (err) {
+      console.warn('[router] deleteHoldsForLead failed:', err instanceof Error ? err.message : String(err));
+    }
+  }
 
   // Fetch full email thread for context. Falls back to empty array on failure.
   const thread = await fetchEmailThread(payload.campaign_id, payload.lead_email);

@@ -4,6 +4,10 @@
   "outputDirectory": ".",
   "functions": {
     "api/webhook.ts": { "maxDuration": 30 },
-    "api/slack-action.ts": { "maxDuration": 60 }
-  }
+    "api/slack-action.ts": { "maxDuration": 60 },
+    "api/cleanup-holds.ts": { "maxDuration": 30 }
+  },
+  "crons": [
+    { "path": "/api/cleanup-holds", "schedule": "0 * * * *" }
+  ]
 }

@@ -23,6 +23,8 @@ const OPTIONAL_VARS = [
   'CALENDAR_IMPERSONATE_EMAIL',
   'MAX_CONSECUTIVE_MEETINGS',
   'MEETING_BREAK_MINUTES',
+  'HOLD_TTL_HOURS',
+  'CRON_SECRET',
 ] as const;
 
 type RequiredVar = (typeof REQUIRED_VARS)[number];

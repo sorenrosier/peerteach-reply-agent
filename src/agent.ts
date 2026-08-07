@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { env, envOptional } from './env';
 import { getAvailableTimes, bookMeeting, CalendlySlot } from './calendly';
-import { getBusyMeetings, wouldExceedConsecutiveMeetings } from './googleCalendar';
+import { getBusyMeetings, wouldExceedConsecutiveMeetings, createHold } from './googleCalendar';
 import { InstantlyWebhookPayload } from './types';
 
 const MODEL = 'claude-sonnet-4-6';
@@ -576,6 +576,7 @@ export interface AgentMocks {
 async function executeToolWithRetry(
   name: string,
   input: Record<string, any>,
+  payload: InstantlyWebhookPayload,
   attempt = 0,
   mocks: AgentMocks = {},
   guestEmails: string[] = [],
@@ -653,6 +654,23 @@ async function executeToolWithRetry(
         natural: naturalTimePhrase(s.startTime, nowForPhrase, tz),
       }));
 
+      // Hold every proposed slot immediately (before a human even reviews the draft) so
+      // Calendly stops offering it to other prospects while this reply is pending. Cheap
+      // (2x30min, spread across different days) and fails open on any error. Awaited
+      // (not fire-and-forget) so the write can't get dropped mid-flight when the
+      // serverless function's process freezes after the response is sent.
+      if (envOptional('GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON')) {
+        for (const s of picked) {
+          await createHold({
+            startIso: s.startTime,
+            endIso: new Date(new Date(s.startTime).getTime() + 30 * 60 * 1000).toISOString(),
+            leadEmail: payload.lead_email,
+            campaignId: payload.campaign_id,
+            label: 'proposed',
+          });
+        }
+      }
+
       console.log(`[agent] get_available_times returned ${slots.length} slots, suggesting: ${suggested.map(s => s.natural).join(' | ')}`);
       return {
         data: {
@@ -670,6 +688,19 @@ async function executeToolWithRetry(
       // verified via get_available_times. The actual booking is created only when a human
       // approves by clicking Send in Slack (see api/slack-action.ts). Here we just prepare
       // the booking params so the agent can draft a confirmation and acknowledge guests.
+      //
+      // The prospect has now explicitly confirmed this time, but it can still sit in the
+      // Slack approval queue for a while before a human clicks Send — hold it now so
+      // nobody else can grab it out from under this booking in the meantime.
+      if (envOptional('GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON')) {
+        await createHold({
+          startIso: input.start_time,
+          endIso: new Date(new Date(input.start_time).getTime() + 30 * 60 * 1000).toISOString(),
+          leadEmail: payload.lead_email,
+          campaignId: payload.campaign_id,
+          label: 'confirmed, awaiting send',
+        });
+      }
       console.log(
         `[agent] book_meeting prepared (books on Send): ${input.start_time}` +
           (guestEmails.length ? ` (guests: ${guestEmails.join(', ')})` : ''),
@@ -718,7 +749,7 @@ async function executeToolWithRetry(
     console.error(`[agent] tool ${name} failed (attempt ${attempt}):`, msg);
     if (attempt < 2) {
       await sleep(500 * Math.pow(2, attempt));
-      return executeToolWithRetry(name, input, attempt + 1, mocks, guestEmails);
+      return executeToolWithRetry(name, input, payload, attempt + 1, mocks, guestEmails);
     }
     return { data: { error: msg } };
   }
@@ -799,7 +830,7 @@ export async function runAgent(
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
 
       for (const block of toolUseBlocks) {
-        const result = await executeToolWithRetry(block.name, block.input as Record<string, any>, 0, mocks, guestEmails);
+        const result = await executeToolWithRetry(block.name, block.input as Record<string, any>, payload, 0, mocks, guestEmails);
 
         if (result.specialAction) {
           return result.specialAction;
