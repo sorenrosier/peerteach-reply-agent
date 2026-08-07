@@ -134,6 +134,9 @@ export async function createHold(params: {
         start: { dateTime: params.startIso },
         end: { dateTime: params.endIso },
         transparency: 'opaque', // shows as busy so Calendly's sync picks it up
+        // Google Calendar colorId '5' = Banana (yellow) — makes tentative holds visually
+        // distinct from real meetings at a glance, without looking alarming like red.
+        colorId: '5',
         extendedProperties: {
           private: {
             peerteach_hold: 'true',
