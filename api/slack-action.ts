@@ -165,6 +165,12 @@ async function processAction(
       // If booking fails (e.g. the slot was taken since the draft was created), do NOT send
       // the confirmation reply — surface the failure so a human can handle it.
       if (parsed.booking) {
+        // Release our OWN tentative hold on this slot BEFORE booking — our hold shows as
+        // busy on Katie's calendar, and Calendly checks that same calendar for conflicts,
+        // so leaving it in place makes Calendly reject the real booking as unavailable
+        // (it thinks the slot is already taken, by us). Clearing it first lets the real
+        // booking go through, which then re-occupies the slot as an actual meeting.
+        await releaseHolds(parsed.lead_email, parsed.campaign_id);
         try {
           await bookMeeting({
             startTime: parsed.booking.startTime,
@@ -174,9 +180,6 @@ async function processAction(
             guests: parsed.booking.guests,
           });
           console.log('[slack-action] booked on send:', parsed.booking.startTime, 'guests:', parsed.booking.guests.join(', ') || 'none');
-          // A specific time is now really booked in Calendly — the tentative hold(s) for
-          // this lead (the chosen slot, and any unclaimed alternate) are no longer needed.
-          await releaseHolds(parsed.lead_email, parsed.campaign_id);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           await updateViaResponseUrl(

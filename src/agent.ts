@@ -134,9 +134,10 @@ const TOOLS: Anthropic.ToolUnion[] = [
       'or any situation that is ambiguous, lacks clear context, or falls outside scheduling a single prospect. ' +
       'When in doubt, escalate rather than guess. ' +
       'Do NOT escalate wrong person situations — draft a reply asking for the right contact. ' +
-      'DO escalate referrals where a direct email was given — human needs to handle the intro. ' +
-      'Even though you are escalating, you must still include a best-effort suggested_reply — a human should be able to ' +
-      'read it, edit if needed, and send, rather than starting from a blank page.',
+      'DO escalate referrals where a direct email was given — a human should review the intro before it goes to a ' +
+      'brand-new stakeholder, but you must still draft it (addressed to the new person, referencing the referral). ' +
+      '"Human needs to review this" is never a reason to leave suggested_reply blank or generic — it means write your ' +
+      'best real attempt and let a human be the safety check, not skip drafting entirely.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -411,6 +412,7 @@ Referral with name only (no email):
 
 Referral with direct email address:
 - Call escalate with reason "Referral — [name] at [email]. Human needs to handle this."
+- Still write a real suggested_reply — a warm intro email addressed to the NEW contact (not the original person), mentioning that the original person passed along their info, briefly introducing PeerTeach, and proposing a quick 30-minute Zoom. This needs a human's judgment before sending (new stakeholder, no prior context), which is why it's escalated — but the human should still get a solid starting draft, not a blank page.
 
 escalate:
 - Existing user replies (handle personally)
