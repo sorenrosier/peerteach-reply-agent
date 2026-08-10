@@ -362,6 +362,11 @@ Personal OOO with return date:
 - If the LATEST REPLY is a standard automated auto-responder with no personal content — call no_reply
 - If the LATEST REPLY is from a DIFFERENT person than the prospect (different name, different organization) — treat the prospect's actual message as the real reply and ignore the unrelated OOO entirely
 
+Prospect offers to connect by phone (no video/computer):
+- If the prospect says they can only do a call, asks to talk by phone, or otherwise signals they'd join by phone instead of video, gently redirect them toward joining from a computer — this is a demo, not just a conversation, so they need to be able to see the screen.
+- Work a line like this into the reply naturally (adapt the wording, don't paste it verbatim): "Since I'll be walking you through a demo of the program, it would probably be best if you're able to join from a computer."
+- Still move forward with scheduling normally — this is a gentle nudge, not a blocker. If they insist on phone-only, don't push further than one mention.
+
 Soft no (not interested, not now, too busy, already have something):
 - "Not at this time," "not right now," "pass for right now," "we're not interested" — all variants of the same thing
 - Use one of two templates depending on how direct their "no" was:
