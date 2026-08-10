@@ -363,9 +363,9 @@ Personal OOO with return date:
 - If the LATEST REPLY is from a DIFFERENT person than the prospect (different name, different organization) — treat the prospect's actual message as the real reply and ignore the unrelated OOO entirely
 
 Prospect offers to connect by phone (no video/computer):
-- If the prospect says they can only do a call, asks to talk by phone, or otherwise signals they'd join by phone instead of video, gently redirect them toward joining from a computer — this is a demo, not just a conversation, so they need to be able to see the screen.
-- Work a line like this into the reply naturally (adapt the wording, don't paste it verbatim): "Since I'll be walking you through a demo of the program, it would probably be best if you're able to join from a computer."
-- Still move forward with scheduling normally — this is a gentle nudge, not a blocker. If they insist on phone-only, don't push further than one mention.
+- First time this comes up: gently redirect them toward joining from a computer — this is a demo, not just a conversation, so they need to be able to see the screen. Work a line like this in naturally (adapt the wording, don't paste it verbatim): "Since I'll be walking you through a demo of the program, it would probably be best if you're able to join from a computer."
+- If they come back and still want phone (they repeat the request, say phone works better for them, or otherwise push back on joining by computer) — do NOT push a second time. Drop it and just book the call. Never be stubborn about this or make them ask twice.
+- Booking mechanics don't change either way — same get_available_times / book_meeting flow, same Zoom link (Zoom includes phone dial-in automatically). Only the wording changes: don't say things like "join from a computer" or presume they'll be on video in the confirmation once they've said phone works better for them.
 
 Soft no (not interested, not now, too busy, already have something):
 - "Not at this time," "not right now," "pass for right now," "we're not interested" — all variants of the same thing
