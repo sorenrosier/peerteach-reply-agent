@@ -673,11 +673,13 @@ async function executeToolWithRetry(
       // (not fire-and-forget) so the write can't get dropped mid-flight when the
       // serverless function's process freezes after the response is sent.
       if (envOptional('GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON')) {
+        const leadName = [payload.firstName, payload.lastName].filter(Boolean).join(' ');
         for (const s of picked) {
           await createHold({
             startIso: s.startTime,
             endIso: new Date(new Date(s.startTime).getTime() + 30 * 60 * 1000).toISOString(),
             leadEmail: payload.lead_email,
+            leadName,
             campaignId: payload.campaign_id,
             label: 'proposed',
           });
@@ -710,6 +712,7 @@ async function executeToolWithRetry(
           startIso: input.start_time,
           endIso: new Date(new Date(input.start_time).getTime() + 30 * 60 * 1000).toISOString(),
           leadEmail: payload.lead_email,
+          leadName: input.name || [payload.firstName, payload.lastName].filter(Boolean).join(' '),
           campaignId: payload.campaign_id,
           label: 'confirmed, awaiting send',
         });

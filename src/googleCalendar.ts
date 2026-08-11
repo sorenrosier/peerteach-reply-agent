@@ -122,15 +122,18 @@ export async function createHold(params: {
   startIso: string;
   endIso: string;
   leadEmail: string;
+  leadName?: string;
   campaignId: string;
   label: string; // e.g. "proposed" or "confirmed, awaiting send"
 }): Promise<string | null> {
   try {
     const token = await getAccessToken();
+    const who = params.leadName ? `${params.leadName} (${params.leadEmail})` : params.leadEmail;
     const res = await axios.post(
       'https://www.googleapis.com/calendar/v3/calendars/primary/events',
       {
-        summary: `[Hold] PeerTeach — ${params.label}`,
+        summary: `[Hold] PeerTeach — ${who} — ${params.label}`,
+        description: `Tentative hold for a PeerTeach scheduling offer.\n\nProspect: ${who}\nStatus: ${params.label}`,
         start: { dateTime: params.startIso },
         end: { dateTime: params.endIso },
         transparency: 'opaque', // shows as busy so Calendly's sync picks it up
@@ -141,6 +144,7 @@ export async function createHold(params: {
           private: {
             peerteach_hold: 'true',
             lead_email: params.leadEmail,
+            lead_name: params.leadName || '',
             campaign_id: params.campaignId,
             created_at: new Date().toISOString(),
           },
@@ -148,7 +152,7 @@ export async function createHold(params: {
       },
       { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 },
     );
-    console.log(`[googleCalendar] created hold ${res.data.id} for ${params.leadEmail} @ ${params.startIso}`);
+    console.log(`[googleCalendar] created hold ${res.data.id} for ${who} @ ${params.startIso}`);
     return res.data.id as string;
   } catch (err) {
     // Fails open — a hold-creation failure should never block drafting or booking.
