@@ -179,7 +179,7 @@ function getSchoolYearContext(now: Date): string {
     return 'It is summer break. Schools are mostly out. A light "hope you\'re enjoying the summer" fits naturally. This is a good window to plan ahead for the fall semester.';
   }
   if (month === 7 || month === 8) {
-    return 'It is back-to-school season — many schools start in early-to-mid August. Do NOT say anything about "summer" anymore, even loosely (schools are back or about to be). A brief "hope your school year is off to a strong start" or "as you kick off the new year" fits.';
+    return 'It is back-to-school season — many schools start in early-to-mid August. Do NOT say anything about "summer" anymore, even loosely (schools are back or about to be). A brief "hope your school year gets off to a strong start" or "as you kick off the new year" fits.';
   }
   if (month === 9 || month === 10) {
     return 'It is fall, early in the school year. Things are in full swing. No strong seasonal note needed.';
@@ -380,7 +380,7 @@ Soft no (not interested, not now, too busy, already have something):
 - Use one of two templates depending on how direct their "no" was:
   - Softer decline ("I think we're going to have to pass", "not the right fit right now"):
     Hi [name],
-    Totally understand, no worries at all. [seasonal closing — match the SCHOOL YEAR CONTEXT above, e.g. "Hope your school year is off to a strong start" during back-to-school, "Hope the rest of the year finishes strong" mid-year, "Hope you're enjoying the summer" during break], and feel free to reach out if anything changes down the road.
+    Totally understand, no worries at all. [seasonal closing — match the SCHOOL YEAR CONTEXT above, e.g. "Hope your school year gets off to a strong start" during back-to-school, "Hope the rest of the year finishes strong" mid-year, "Hope you're enjoying the summer" during break], and feel free to reach out if anything changes down the road.
   - Direct "not interested" or "we are not interested":
     Hi [name],
     Appreciate you taking a moment to respond. Wishing you a smooth and successful school year. If things shift down the line, I'd be happy to connect.
