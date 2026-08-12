@@ -84,13 +84,13 @@ async function postMessage(blocks: any[], fallbackText: string): Promise<string 
   }
 }
 
-function replySubject(subject: string): string {
+export function replySubject(subject: string): string {
   const s = subject.trim();
   return /^re:/i.test(s) ? s : `Re: ${s}`;
 }
 
 // Human-readable booking time for the Slack approval card, in the prospect's timezone.
-function formatBookingTime(startTimeIso: string, timezone: string): string {
+export function formatBookingTime(startTimeIso: string, timezone: string): string {
   try {
     return new Intl.DateTimeFormat('en-US', {
       weekday: 'short',
@@ -478,6 +478,40 @@ export async function postAgentDraft(
   ];
 
   await postMessage(blocks, `${header} from ${payload.lead_email}`);
+}
+
+// Posts an informational (no buttons) notice for a draft that was sent automatically,
+// with no human review. Kept visually distinct from postAgentDraft's approval cards, and
+// uses the same ":white_check_mark: Reply sent" style phrasing conventions elsewhere in
+// this file so historical Slack-history analysis keeps working the same way.
+export async function postAutoSentNotification(
+  payload: InstantlyWebhookPayload,
+  result: AgentResult,
+): Promise<void> {
+  const draft = result.draft ?? '';
+  const header = result.booked
+    ? ':zap: Auto-sent — meeting booked (no human review)'
+    : ':zap: Auto-sent (no human review)';
+
+  const blocks: any[] = [
+    { type: 'header', text: { type: 'plain_text', text: header, emoji: true } },
+    { type: 'section', text: { type: 'mrkdwn', text: prospectSummary(payload) } },
+    {
+      type: 'section',
+      text: { type: 'mrkdwn', text: `*Sent (from ${payload.email_account}):*\n${quoteBlock(draft, 2500)}` },
+    },
+    ...(result.booked && result.pendingBooking ? [{
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: `:calendar: *Booked:* ${formatBookingTime(result.pendingBooking.startTime, result.pendingBooking.timezone)}${result.pendingBooking.guests.length ? `  ·  guests: ${result.pendingBooking.guests.join(', ')}` : ''}` }],
+    }] : []),
+    {
+      type: 'section',
+      text: { type: 'mrkdwn', text: `*Their reply:*\n${quoteBlock(payload.reply_text || payload.reply_text_snippet || '')}` },
+    },
+    { type: 'actions', elements: [uniboxButton(payload)] },
+  ];
+
+  await postMessage(blocks, `${header} to ${payload.lead_email}`);
 }
 
 // Update an existing message via response_url (used by slack-action handler).

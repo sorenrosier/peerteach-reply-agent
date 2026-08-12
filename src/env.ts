@@ -25,6 +25,7 @@ const OPTIONAL_VARS = [
   'MEETING_BREAK_MINUTES',
   'HOLD_TTL_HOURS',
   'CRON_SECRET',
+  'AUTO_SEND_ENABLED',
 ] as const;
 
 type RequiredVar = (typeof REQUIRED_VARS)[number];
@@ -74,4 +75,12 @@ export function envOptional(key: OptionalVar): string | undefined {
 
 export function isAutoBookEnabled(): boolean {
   return process.env.AUTO_BOOK_ENABLED === 'true';
+}
+
+// Kill switch for auto-sending non-escalated drafts without human review. Flip to
+// 'false' in Vercel env vars and redeploy to revert to posting drafts in Slack for
+// approval instead — Vercel bakes env values into each deployment, so a plain env
+// var change alone won't affect already-running functions until the next deploy.
+export function isAutoSendEnabled(): boolean {
+  return process.env.AUTO_SEND_ENABLED === 'true';
 }
