@@ -230,11 +230,17 @@ PRODUCT:
 
 PRICING / "IS IT FREE?" HANDLING:
 - Do NOT lead with "it's free" as the selling point. Let the value carry the message.
-- If a teacher asks directly about pricing or whether the pilot is free, answer plainly and specifically: yes, the first month is fully covered by our grant funding, then immediately say what that month delivers.
-- Always scope it to the first month — make clear what is and isn't covered.
-- After that first month, continued platform access does have a cost, and when a class wants to continue, we help the school find a path that fits.
-- Example response to a pricing question:
+- If asked directly about pricing or whether the pilot is free, answer plainly and specifically: yes, the first month/pilot is fully covered by our grant funding, then immediately say what that covers.
+- Always scope it to the pilot period — make clear what is and isn't covered.
+- The framing differs by AUDIENCE (see context) — a teacher and a school-level decision-maker are asking for different reasons and need different levels of detail:
+
+  TEACHER audience — keep it classroom-scoped, keep continued-cost language soft since they're usually not the budget holder:
   "Great question. Our grant funding covers getting your classroom fully up and running this first month: we train all of your students to be effective peer coaches and facilitate the first several sessions with you so the routine takes hold. Once that's in place, most teachers want to keep it going, since the platform is what keeps students coaching each other well throughout the year. Continued access does have a cost, and when a class wants to continue, we help the school find a path that fits. The best next step is a quick 30-minute Zoom so I can show you how it works and answer anything else that comes up."
+
+  ADMIN audience (principal, director, superintendent, or anyone evaluating this at the school/district level, not just their own classroom) — scale the framing to the whole school, name the actual pricing model, and offer to cover implementation planning on the call, since this is the person who'd actually decide and budget for a rollout:
+  "Great question. We're currently able to offer schools a grant-funded 1-month pilot of PeerTeach at no cost. That includes teacher onboarding, student access, and support throughout the pilot. If your team decides PeerTeach is a good fit after the pilot, there is a per-student cost to continue using the program for the remainder of the school year. I'd be happy to walk you through how the pilot works, what implementation could look like at your school, and pricing on a quick 30-minute Zoom."
+
+  If AUDIENCE is unknown, default to the TEACHER framing (matches current baseline behavior) unless something else in the thread clearly signals a school-level role (e.g. they sign as "Principal," reference district-wide decisions, mention budget/procurement).
 
 CURRENT DATE/TIME: ${dateTimeStr}
 TODAY (ISO): ${todayIso}
@@ -434,6 +440,24 @@ REMEMBER: You have access to the full email thread. Use all prior context.
 Never propose times you have not verified with get_available_times.`;
 }
 
+// Determines whether the prospect is a school-level decision-maker (principal, director,
+// superintendent, etc.) or a classroom teacher. "Persona" is a campaign/list-level field
+// Instantly sets per audience list ("Site Admin" or "Teacher") — reliable because it's
+// fixed per list, not inferred per person. Role is free text ("Principal", "Director",
+// "Assistant Director", "5th Grade Teacher") — used as a fallback when Persona is missing,
+// since not every admin title literally contains the word "principal".
+const ADMIN_ROLE_PATTERN = /principal|superintendent|director|dean|head of school|assoc(?:iate)? principal|vice principal/i;
+
+function classifyAudience(payload: InstantlyWebhookPayload): 'admin' | 'teacher' | 'unknown' {
+  const persona = (payload.Persona || '').toLowerCase();
+  if (persona === 'site admin') return 'admin';
+  if (persona === 'teacher') return 'teacher';
+  const role = payload.Role || '';
+  if (ADMIN_ROLE_PATTERN.test(role)) return 'admin';
+  if (role) return 'teacher';
+  return 'unknown';
+}
+
 function buildContext(payload: InstantlyWebhookPayload, thread: ThreadEmail[]): string {
   const name =
     [payload.firstName, payload.lastName].filter(Boolean).join(' ') || 'the prospect';
@@ -444,8 +468,14 @@ function buildContext(payload: InstantlyWebhookPayload, thread: ThreadEmail[]): 
     payload['District Name'] ||
     'unknown school';
   const state = payload.State || payload.state || '';
+  const audience = classifyAudience(payload);
+  const audienceLabel =
+    audience === 'admin' ? 'Site admin / decision-maker (principal, director, superintendent, etc.)'
+    : audience === 'teacher' ? 'Classroom teacher'
+    : 'Unknown — infer from their role/title and message if possible, otherwise default to classroom-teacher framing';
 
   let ctx = `PROSPECT: ${name}, ${role} at ${school}${state ? `, ${state}` : ''}\n`;
+  ctx += `AUDIENCE: ${audienceLabel}\n`;
   if (state) ctx += `STATE: ${state}\n`;
   ctx += `EMAIL: ${payload.lead_email}\n`;
   ctx += `CAMPAIGN: ${payload.campaign_name}\n\n`;
