@@ -211,6 +211,7 @@ export async function postEscalateNotification(
   payload: InstantlyWebhookPayload,
   classification: ClassificationResult,
   suggestedReply?: string,
+  ccEmails?: string[],
 ): Promise<void> {
   const blocks: any[] = [
     {
@@ -237,6 +238,7 @@ export async function postEscalateNotification(
       body_text: suggestedReply,
       lead_email: payload.lead_email,
       campaign_id: payload.campaign_id,
+      ...(ccEmails && ccEmails.length ? { cc: ccEmails } : {}),
     };
     const valueStr = JSON.stringify(buttonValue);
     let finalValue = valueStr;
@@ -255,6 +257,13 @@ export async function postEscalateNotification(
       type: 'section',
       text: { type: 'mrkdwn', text: `*Suggested reply (needs human review before sending):*\n${quoteBlock(suggestedReply, 2500)}` },
     });
+
+    if (ccEmails && ccEmails.length) {
+      blocks.push({
+        type: 'context',
+        elements: [{ type: 'mrkdwn', text: `:link: *Will cc on Send:* ${ccEmails.join(', ')}` }],
+      });
+    }
 
     actionsElements.push(
       {
@@ -409,6 +418,7 @@ export async function postAgentDraft(
     body_text: draft,
     lead_email: payload.lead_email,
     campaign_id: payload.campaign_id,
+    ...(result.ccEmails && result.ccEmails.length ? { cc: result.ccEmails } : {}),
     ...(result.pendingBooking ? { booking: result.pendingBooking } : {}),
   };
   const valueStr = JSON.stringify(buttonValue);
@@ -429,6 +439,7 @@ export async function postAgentDraft(
     email_id: payload.email_id,
     lead_email: payload.lead_email,
     campaign_id: payload.campaign_id,
+    ...(result.ccEmails && result.ccEmails.length ? { cc: result.ccEmails } : {}),
     ...(result.pendingBooking ? { booking: result.pendingBooking } : {}),
   });
 
@@ -500,6 +511,10 @@ export async function postAutoSentNotification(
       type: 'section',
       text: { type: 'mrkdwn', text: `*Sent (from ${payload.email_account}):*\n${quoteBlock(draft, 2500)}` },
     },
+    ...(result.ccEmails && result.ccEmails.length ? [{
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: `:link: *Cc:* ${result.ccEmails.join(', ')}` }],
+    }] : []),
     ...(result.booked && result.pendingBooking ? [{
       type: 'context',
       elements: [{ type: 'mrkdwn', text: `:calendar: *Booked:* ${formatBookingTime(result.pendingBooking.startTime, result.pendingBooking.timezone)}${result.pendingBooking.guests.length ? `  ·  guests: ${result.pendingBooking.guests.join(', ')}` : ''}` }],

@@ -22,6 +22,9 @@ export interface AgentResult {
     timezone: string;
     guests: string[];
   };
+  // Everyone else on the thread (colleagues looped in via to/cc) who should be cc'd if
+  // this draft is sent. Computed in code from thread data, not left to the model.
+  ccEmails?: string[];
   returnDate?: string;
   reason?: string;
 }
@@ -87,6 +90,9 @@ export interface SendReplyButtonValue {
   body_text: string;
   lead_email: string;
   campaign_id: string;
+  // Everyone else who should be cc'd on the reply itself (colleagues looped in on the
+  // thread). Distinct from booking.guests, which controls the Calendly invite.
+  cc?: string[];
   // When present, the Calendly meeting is booked at Send time (before the reply is sent).
   booking?: {
     startTime: string;

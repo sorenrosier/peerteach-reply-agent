@@ -21,6 +21,9 @@ export interface AgentResult {
     timezone: string;
     guests: string[];
   };
+  // Everyone else on the thread (colleagues looped in via to/cc) who should be cc'd if
+  // this draft is sent. Computed in code from thread data, not left to the model.
+  ccEmails?: string[];
   returnDate?: string;
   reason?: string;
 }
@@ -396,7 +399,13 @@ Wrong person / not teaching math / retiring / leaving:
 - Never treat this as a soft no or a hard no — they may still be able to point you to the right person
 - Never escalate for this on its own — only escalate once a full name + email has been provided (per the referral rule)
 
-Someone new appears in cc — first figure out WHICH of these five situations it is, since they get handled very differently:
+Someone new appears in cc — first figure out WHICH of these situations it is, since they get handled very differently. IMPORTANT: each message in the thread above shows an "Also on this message:" line listing every address that was actually on that message (to + cc), when there is one. This is the ONLY reliable way to know who else is on the thread — people often say "I cc'd so-and-so" without spelling out that person's name or email in the message text itself. Always check "Also on this message:" before assuming you don't know someone's email or asking for it — if their address is already there, you already have it.
+
+0. Explicit request to loop someone in for scheduling (not a full handoff) — e.g. "please include my assistant," "cc my colleague on scheduling," "copy X in to help find a time":
+   - This is neither a simple FYI (case 3 below) nor a full handoff (case 4 below) — they want to keep talking to you AND have the other person involved in scheduling.
+   - Check "Also on this message:" for that person's address — it will be there if they were actually cc'd/added, even if the prospect didn't spell out the name or email themselves.
+   - If found: reply addressed to both people, propose times normally, and do NOT ask for their name or email — you already have it.
+   - If genuinely not found anywhere in the thread (rare — most "please include X" requests do add them to the message), only then ask for their contact info.
 
 1. Same person, different address (not a new contact):
    The CC'd address is clearly the same human as the sender — matching name or local-part across a personal vs. official district address (e.g. sender "kate.boling@glynn.k12.ga.us" cc's "kboling@glynn.k12.ga.us"; sender "akaur@leisd.ws" cc's "akaur@littleelmisd.net"). This is not a new contact.
@@ -483,9 +492,17 @@ function buildContext(payload: InstantlyWebhookPayload, thread: ThreadEmail[]): 
   ctx += `--- EMAIL THREAD (oldest first) ---\n\n`;
 
   if (thread.length > 0) {
+    const ownAccount = (payload.email_account || '').toLowerCase().trim();
     for (const email of thread) {
       const from = email.isOutbound ? `You (${payload.email_account})` : `${name} (${payload.lead_email})`;
-      ctx += `[${from}${email.timestamp ? ' · ' + email.timestamp : ''}]\n${email.body}\n\n`;
+      // Surface who else was on this specific message (besides you) — this is the only
+      // way to actually see a looped-in colleague's address; it is NOT reliably spelled
+      // out in the body text itself.
+      const others = [...(email.to ?? []), ...(email.cc ?? [])]
+        .map((e) => (e || '').toLowerCase().trim())
+        .filter((e) => e && e !== ownAccount && e !== payload.lead_email?.toLowerCase().trim());
+      const othersLine = others.length ? `Also on this message: ${[...new Set(others)].join(', ')}\n` : '';
+      ctx += `[${from}${email.timestamp ? ' · ' + email.timestamp : ''}]\n${othersLine}${email.body}\n\n`;
     }
   } else {
     ctx += `[You · ${payload.email_account}]\n${payload.email_text || '(unavailable)'}\n\n`;
@@ -867,6 +884,7 @@ export async function runAgent(
         draft: cleaned,
         booked: !!pendingBooking,
         pendingBooking,
+        ccEmails: guestEmails,
       };
     }
 
@@ -881,7 +899,7 @@ export async function runAgent(
         const result = await executeToolWithRetry(block.name, block.input as Record<string, any>, payload, 0, mocks, guestEmails);
 
         if (result.specialAction) {
-          return result.specialAction;
+          return { ...result.specialAction, ccEmails: guestEmails };
         }
 
         if (block.name === 'book_meeting' && result.data?.success) {

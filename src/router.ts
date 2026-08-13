@@ -1,4 +1,4 @@
-import { runAgent, AgentResult } from './agent';
+import { runAgent, AgentResult, computeGuestEmails } from './agent';
 import { replyToEmail, fetchEmailThread } from './instantly';
 import { bookMeeting } from './calendly';
 import { deleteHoldsForLead } from './googleCalendar';
@@ -59,8 +59,9 @@ async function autoSendDraft(payload: InstantlyWebhookPayload, result: AgentResu
       eaccount: payload.email_account,
       subject: replySubject(payload.reply_subject || payload.email_subject || ''),
       body: { text: result.draft! },
+      cc: result.ccEmails,
     });
-    console.log('[router] autoSendDraft: reply sent to', payload.lead_email);
+    console.log('[router] autoSendDraft: reply sent to', payload.lead_email, result.ccEmails?.length ? `cc: ${result.ccEmails.join(', ')}` : '');
   } catch (err) {
     await postErrorNotification(payload, err, 'autoSendDraft: replyToEmail failed');
     return;
@@ -104,6 +105,26 @@ export async function routeReply(payload: InstantlyWebhookPayload): Promise<void
 
   console.log(`[router] agent action=${result.action} booked=${result.booked ?? false}`);
 
+  // Deterministic safety net: until CC/loop-in handling is fully validated in production,
+  // force human review for ANY reply where someone besides us and the primary lead is on
+  // the thread — regardless of what the model decided. Detection is code-based (thread
+  // to/cc data via computeGuestEmails), not left to the model, since misjudging exactly
+  // this situation is what caused a real incident (wrong-recipient reply, asking for a
+  // contact who was already on the thread).
+  if (result.action === 'draft' && result.draft) {
+    const loopedIn = computeGuestEmails(thread, payload);
+    if (loopedIn.length > 0) {
+      console.log(`[router] loop-in detected (${loopedIn.join(', ')}) — forcing escalation`);
+      const forcedEscalation: AgentResult = {
+        action: 'escalate',
+        reason: `Loop-in detected on thread (${loopedIn.join(', ')}) — escalating for human review until CC handling is fully validated.`,
+        draft: result.draft,
+        ccEmails: loopedIn,
+      };
+      result = forcedEscalation;
+    }
+  }
+
   try {
     switch (result.action) {
       case 'no_reply':
@@ -128,6 +149,7 @@ export async function routeReply(payload: InstantlyWebhookPayload): Promise<void
             extractedInfo: {},
           },
           result.draft,
+          result.ccEmails,
         );
         return;
 

@@ -65,6 +65,7 @@ export interface ReplyToEmailParams {
   eaccount: string;
   subject: string;
   body: { text: string; html?: string };
+  cc?: string[];
 }
 
 export async function replyToEmail(params: ReplyToEmailParams): Promise<void> {
@@ -82,6 +83,7 @@ export async function replyToEmail(params: ReplyToEmailParams): Promise<void> {
         text: params.body.text,
         html,
       },
+      ...(params.cc && params.cc.length ? { cc_address_email_list: params.cc.join(',') } : {}),
     },
   });
 }

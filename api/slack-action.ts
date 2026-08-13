@@ -195,6 +195,7 @@ async function processAction(
           eaccount: parsed.eaccount,
           subject: parsed.subject,
           body: { text: parsed.body_text },
+          cc: parsed.cc,
         });
         const userTag = payload.user?.id ? `<@${payload.user.id}>` : 'a teammate';
         await updateViaResponseUrl(
@@ -205,7 +206,7 @@ async function processAction(
               type: 'section',
               text: {
                 type: 'mrkdwn',
-                text: `:white_check_mark: *Reply sent* at ${now} by ${userTag}\n\n*To:* ${parsed.lead_email}\n\n>>> ${parsed.body_text.slice(0, 1500)}`,
+                text: `:white_check_mark: *Reply sent* at ${now} by ${userTag}\n\n*To:* ${parsed.lead_email}${parsed.cc && parsed.cc.length ? `\n*Cc:* ${parsed.cc.join(', ')}` : ''}\n\n>>> ${parsed.body_text.slice(0, 1500)}`,
               },
             },
           ],
