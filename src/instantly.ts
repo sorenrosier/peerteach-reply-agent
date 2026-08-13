@@ -178,6 +178,9 @@ export interface ThreadEmail {
   body: string;
   timestamp: string;
   isOutbound: boolean;
+  from?: string;
+  to?: string[];
+  cc?: string[];
 }
 
 // Fetches the email thread for a lead. Falls back to empty array on any error.

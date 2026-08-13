@@ -114,10 +114,25 @@ export async function routeReply(payload: InstantlyWebhookPayload): Promise<void
   if (result.action === 'draft' && result.draft) {
     const loopedIn = computeGuestEmails(thread, payload);
     if (loopedIn.length > 0) {
+      let reason = `Loop-in detected on thread (${loopedIn.join(', ')}) — escalating for human review until CC handling is fully validated.`;
+
+      // If a booking is about to happen, call out specifically whether the chosen
+      // Calendly invitee actually matches who's been corresponding — this exact mismatch
+      // (booked under the original cold-email contact instead of whoever actually took
+      // over and confirmed) has already caused a real no-show.
+      if (result.pendingBooking) {
+        const latestInbound = [...thread].reverse().find((e) => !e.isOutbound);
+        const activeSender = (latestInbound?.from || '').toLowerCase().trim();
+        const bookedEmail = result.pendingBooking.email.toLowerCase().trim();
+        if (activeSender && activeSender !== bookedEmail) {
+          reason = `BOOKING IDENTITY CHECK: about to book the meeting under ${bookedEmail}, but the most recent message on this thread came from ${activeSender} — confirm this is the right person before sending, or the invite/reminders will go to the wrong contact. (${reason})`;
+        }
+      }
+
       console.log(`[router] loop-in detected (${loopedIn.join(', ')}) — forcing escalation`);
       const forcedEscalation: AgentResult = {
         action: 'escalate',
-        reason: `Loop-in detected on thread (${loopedIn.join(', ')}) — escalating for human review until CC handling is fully validated.`,
+        reason,
         draft: result.draft,
         ccEmails: loopedIn,
       };
