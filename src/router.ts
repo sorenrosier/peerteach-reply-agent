@@ -135,6 +135,10 @@ export async function routeReply(payload: InstantlyWebhookPayload): Promise<void
         reason,
         draft: result.draft,
         ccEmails: loopedIn,
+        // Preserve the prepared booking so a human clicking Send on the escalated card
+        // still actually books the meeting, rather than sending a confirmation for
+        // nothing — dropping this here was a real bug found in a later audit.
+        pendingBooking: result.pendingBooking,
       };
       result = forcedEscalation;
     }
@@ -165,6 +169,7 @@ export async function routeReply(payload: InstantlyWebhookPayload): Promise<void
           },
           result.draft,
           result.ccEmails,
+          result.pendingBooking,
         );
         return;
 

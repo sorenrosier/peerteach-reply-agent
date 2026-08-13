@@ -212,6 +212,7 @@ export async function postEscalateNotification(
   classification: ClassificationResult,
   suggestedReply?: string,
   ccEmails?: string[],
+  pendingBooking?: AgentResult['pendingBooking'],
 ): Promise<void> {
   const blocks: any[] = [
     {
@@ -239,6 +240,7 @@ export async function postEscalateNotification(
       lead_email: payload.lead_email,
       campaign_id: payload.campaign_id,
       ...(ccEmails && ccEmails.length ? { cc: ccEmails } : {}),
+      ...(pendingBooking ? { booking: pendingBooking } : {}),
     };
     const valueStr = JSON.stringify(buttonValue);
     let finalValue = valueStr;
@@ -257,6 +259,13 @@ export async function postEscalateNotification(
       type: 'section',
       text: { type: 'mrkdwn', text: `*Suggested reply (needs human review before sending):*\n${quoteBlock(suggestedReply, 2500)}` },
     });
+
+    if (pendingBooking) {
+      blocks.push({
+        type: 'context',
+        elements: [{ type: 'mrkdwn', text: `:calendar: *Will book on Send:* ${formatBookingTime(pendingBooking.startTime, pendingBooking.timezone)}${pendingBooking.guests.length ? `  ·  guests: ${pendingBooking.guests.join(', ')}` : ''}` }],
+      });
+    }
 
     if (ccEmails && ccEmails.length) {
       blocks.push({

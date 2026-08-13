@@ -1,4 +1,5 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import { waitUntil } from '@vercel/functions';
 import { routeReply } from '../src/router';
 import { validateEnv, envOptional } from '../src/env';
 import { InstantlyWebhookPayload } from '../src/types';
@@ -77,18 +78,23 @@ export default async function handler(
 
   const payload = body as InstantlyWebhookPayload;
 
-  // Process first, then respond. Vercel freezes the lambda immediately after res.end(),
-  // so we must complete all async work before sending the response.
-  // Instantly waits up to 30s and our maxDuration is 30s — sufficient for classify + Slack.
-  try {
-    await routeReply(payload);
-  } catch (err) {
+  // Acknowledge Instantly IMMEDIATELY rather than processing synchronously first. The
+  // pipeline has grown a lot since this was originally a quick classify+Slack-post (now:
+  // an 8-iteration Claude tool loop, Calendly availability checks, Google Calendar hold
+  // create/delete, and — with AUTO_SEND_ENABLED — the full booking+send flow), so it can
+  // comfortably exceed 30s. If Instantly has its own webhook timeout, a slow synchronous
+  // response risks it treating the delivery as failed and retrying, which would process
+  // the same reply twice (duplicate Slack cards, or worse, duplicate auto-sends/bookings).
+  // Do the real work in the background via waitUntil, matching the same pattern already
+  // used in api/slack-action.ts.
+  const work = routeReply(payload).catch((err) => {
     console.error(
       '[webhook] routeReply threw at top level',
       err instanceof Error ? err.stack : String(err),
       { lead_email: payload.lead_email, campaign_id: payload.campaign_id },
     );
-  }
+  });
+  waitUntil(work);
 
   res.status(200).json({ ok: true });
 }

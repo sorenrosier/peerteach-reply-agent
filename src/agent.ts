@@ -458,10 +458,13 @@ Never propose times you have not verified with get_available_times.`;
 const ADMIN_ROLE_PATTERN = /principal|superintendent|director|dean|head of school|assoc(?:iate)? principal|vice principal/i;
 
 function classifyAudience(payload: InstantlyWebhookPayload): 'admin' | 'teacher' | 'unknown' {
-  const persona = (payload.Persona || '').toLowerCase();
-  if (persona === 'site admin') return 'admin';
-  if (persona === 'teacher') return 'teacher';
-  const role = payload.Role || '';
+  // Different campaigns use different casing/values for this custom field — confirmed in
+  // production data: some use "Persona": "Site Admin", others use lowercase "persona":
+  // "principals". Check both keys and match loosely rather than requiring an exact string.
+  const persona = (payload.Persona || payload['persona'] || '').toLowerCase();
+  if (persona.includes('admin') || persona.includes('principal')) return 'admin';
+  if (persona === 'teacher' || persona.includes('teacher')) return 'teacher';
+  const role = payload.Role || payload['role'] || '';
   if (ADMIN_ROLE_PATTERN.test(role)) return 'admin';
   if (role) return 'teacher';
   return 'unknown';
@@ -508,8 +511,21 @@ function buildContext(payload: InstantlyWebhookPayload, thread: ThreadEmail[]): 
     ctx += `[You · ${payload.email_account}]\n${payload.email_text || '(unavailable)'}\n\n`;
   }
 
+  // Label the latest reply's actual sender — usually the original lead, but if someone
+  // else has taken over the thread (see cc/loop-in rules), payload.lead_email would
+  // mislabel who really sent it. The thread's own most recent inbound message (if present)
+  // is more trustworthy than blindly assuming it's always the original contact — this
+  // exact mislabeling was a contributing factor in a real booked-the-wrong-person incident.
+  const leadEmailLower = (payload.lead_email || '').toLowerCase().trim();
+  const latestThreadInbound = [...thread].reverse().find((e) => !e.isOutbound);
+  const latestReplyFrom = (latestThreadInbound?.from || payload.lead_email || '').toLowerCase().trim();
+  const latestReplyLabel =
+    !latestReplyFrom || latestReplyFrom === leadEmailLower
+      ? `${name} (${payload.lead_email})`
+      : latestReplyFrom;
+
   ctx += `--- LATEST REPLY (this is what just came in — your job is to respond to this) ---\n`;
-  ctx += `[${name} (${payload.lead_email})]\n${payload.reply_text || payload.reply_text_snippet || '(empty)'}\n`;
+  ctx += `[${latestReplyLabel}]\n${payload.reply_text || payload.reply_text_snippet || '(empty)'}\n`;
   ctx += `---\n\nRespond to the LATEST REPLY above. Any OOO or unrelated content in older thread emails is context only — do not let it override the latest reply. Use tools as needed.`;
   return ctx;
 }
@@ -899,7 +915,11 @@ export async function runAgent(
         const result = await executeToolWithRetry(block.name, block.input as Record<string, any>, payload, 0, mocks, guestEmails);
 
         if (result.specialAction) {
-          return { ...result.specialAction, ccEmails: guestEmails };
+          // Carry pendingBooking through even on escalate/hard_no/ooo — if the model had
+          // already confirmed a booking before escalating for an unrelated reason, a human
+          // clicking Send on the escalated card needs this to actually create the Calendly
+          // booking, not just send a reply that claims one exists.
+          return { ...result.specialAction, ccEmails: guestEmails, pendingBooking };
         }
 
         if (block.name === 'book_meeting' && result.data?.success) {
