@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { deleteExpiredHolds } from '../src/googleCalendar';
+import { SOREN_EMAIL } from '../src/env';
 
 // GET /api/cleanup-holds — run on a schedule (Vercel Cron) to release tentative calendar
 // holds that nobody responded to within HOLD_TTL_HOURS. Vercel signs cron requests with a
@@ -24,8 +25,15 @@ export default async function handler(
   }
 
   try {
-    const result = await deleteExpiredHolds();
-    res.status(200).json({ ok: true, ...result });
+    const katie = await deleteExpiredHolds();
+    const soren = await deleteExpiredHolds(SOREN_EMAIL);
+    res.status(200).json({
+      ok: true,
+      checked: katie.checked + soren.checked,
+      deleted: katie.deleted + soren.deleted,
+      katie,
+      soren,
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error('[cleanup-holds] failed:', msg);

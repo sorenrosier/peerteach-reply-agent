@@ -14,7 +14,10 @@ export interface CalendarEvent {
   summary: string;
 }
 
-let cachedToken: { token: string; expiresAt: number } | null = null;
+// Keyed by impersonated email — Katie's and Soren's calendars are both accessed through
+// this same domain-wide-delegation service account, just impersonating different users,
+// so each needs its own cached token.
+const cachedTokens = new Map<string, { token: string; expiresAt: number }>();
 
 function base64url(input: Buffer | string): string {
   return Buffer.from(input)
@@ -33,14 +36,17 @@ function loadServiceAccount(): ServiceAccountKey {
 // Exchanges a domain-wide-delegation JWT for an access token, impersonating the
 // calendar owner (Katie) via the `sub` claim — she never needs to log in or grant
 // anything herself; the Workspace admin authorized this once in the Admin Console.
-async function getAccessToken(): Promise<string> {
+// Exported so other modules (sorenBooking.ts) that need direct Calendar API access for
+// an impersonated user can reuse this instead of re-implementing the JWT exchange.
+export async function getAccessToken(impersonate?: string): Promise<string> {
+  const sub = impersonate || envOptional('CALENDAR_IMPERSONATE_EMAIL') || 'katie@peerteach.org';
   const now = Math.floor(Date.now() / 1000);
-  if (cachedToken && cachedToken.expiresAt > now + 60) {
-    return cachedToken.token;
+  const cached = cachedTokens.get(sub);
+  if (cached && cached.expiresAt > now + 60) {
+    return cached.token;
   }
 
   const sa = loadServiceAccount();
-  const impersonate = envOptional('CALENDAR_IMPERSONATE_EMAIL') || 'katie@peerteach.org';
   const tokenUri = sa.token_uri || 'https://oauth2.googleapis.com/token';
 
   const header = { alg: 'RS256', typ: 'JWT' };
@@ -50,7 +56,7 @@ async function getAccessToken(): Promise<string> {
     // delegation UI uses comma-separated, but the token request itself needs spaces).
     scope: 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events',
     aud: tokenUri,
-    sub: impersonate,
+    sub,
     iat: now,
     exp: now + 3600,
   };
@@ -73,7 +79,7 @@ async function getAccessToken(): Promise<string> {
 
   const token = res.data.access_token as string;
   const expiresIn = (res.data.expires_in as number) ?? 3600;
-  cachedToken = { token, expiresAt: now + expiresIn };
+  cachedTokens.set(sub, { token, expiresAt: now + expiresIn });
   return token;
 }
 
@@ -82,9 +88,10 @@ async function getAccessToken(): Promise<string> {
 // from the back-to-back count entirely rather than counted as fatigue.
 const NON_MEETING_PATTERN = /do not book|blocked?|focus time|\blunch\b|\bbreak\b|personal/i;
 
-// Fetches Katie's real (non-blocked, non-all-day) calendar events in a range.
-export async function getBusyMeetings(startIso: string, endIso: string): Promise<CalendarEvent[]> {
-  const token = await getAccessToken();
+// Fetches a calendar's real (non-blocked, non-all-day) events in a range. Defaults to
+// Katie's calendar; pass calendarEmail to check Soren's (or anyone else's) instead.
+export async function getBusyMeetings(startIso: string, endIso: string, calendarEmail?: string): Promise<CalendarEvent[]> {
+  const token = await getAccessToken(calendarEmail);
   const res = await axios.get('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
     headers: { Authorization: `Bearer ${token}` },
     params: {
@@ -125,9 +132,10 @@ export async function createHold(params: {
   leadName?: string;
   campaignId: string;
   label: string; // e.g. "proposed" or "confirmed, awaiting send"
+  calendarEmail?: string; // defaults to Katie's calendar
 }): Promise<string | null> {
   try {
-    const token = await getAccessToken();
+    const token = await getAccessToken(params.calendarEmail);
     const who = params.leadName ? `${params.leadName} (${params.leadEmail})` : params.leadEmail;
     const res = await axios.post(
       'https://www.googleapis.com/calendar/v3/calendars/primary/events',
@@ -167,9 +175,9 @@ export async function createHold(params: {
 // Deletes all holds tagged with this lead+campaign — called whenever a new reply comes in
 // from that lead (their old holds are now stale, whatever they said) and after a real
 // Calendly booking is created (the tentative hold is no longer needed).
-export async function deleteHoldsForLead(leadEmail: string, campaignId: string): Promise<void> {
+export async function deleteHoldsForLead(leadEmail: string, campaignId: string, calendarEmail?: string): Promise<void> {
   try {
-    const token = await getAccessToken();
+    const token = await getAccessToken(calendarEmail);
     const res = await axios.get('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
       headers: { Authorization: `Bearer ${token}` },
       params: {
@@ -199,8 +207,8 @@ export async function deleteHoldsForLead(leadEmail: string, campaignId: string):
 // Sweeps for holds older than HOLD_TTL_HOURS with no matching real booking and deletes
 // them. Meant to be called on a schedule (Vercel Cron) since nothing else naturally
 // triggers cleanup for prospects who never reply.
-export async function deleteExpiredHolds(): Promise<{ checked: number; deleted: number }> {
-  const token = await getAccessToken();
+export async function deleteExpiredHolds(calendarEmail?: string): Promise<{ checked: number; deleted: number }> {
+  const token = await getAccessToken(calendarEmail);
   const res = await axios.get('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
     headers: { Authorization: `Bearer ${token}` },
     params: {

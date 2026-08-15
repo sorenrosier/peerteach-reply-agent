@@ -1,8 +1,21 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { env, envOptional } from './env';
-import { getAvailableTimes, bookMeeting, CalendlySlot } from './calendly';
+import { env, envOptional, isSorenBookingEnabled, SOREN_EMAIL } from './env';
+import { getAvailableTimes, bookMeeting } from './calendly';
+import { getSorenAvailableTimes } from './sorenBooking';
 import { getBusyMeetings, wouldExceedConsecutiveMeetings, createHold } from './googleCalendar';
 import { InstantlyWebhookPayload } from './types';
+
+export type BookingHost = 'katie' | 'soren';
+
+// Kreg's and Soren's own inbox threads book onto Soren's calendar rather than Katie's
+// (per explicit instruction, "for now") — Katie's inbox is the only one that still
+// defaults to her calendar. Soren-booking being on/off (isSorenBookingEnabled) is
+// handled separately by the callers of this.
+export function getBookingHost(emailAccount: string): BookingHost {
+  const lower = (emailAccount || '').toLowerCase();
+  if (lower.includes('kreg') || lower.includes('soren')) return 'soren';
+  return 'katie';
+}
 
 const MODEL = 'claude-sonnet-4-6';
 
@@ -20,6 +33,7 @@ export interface AgentResult {
     email: string;
     timezone: string;
     guests: string[];
+    host: BookingHost; // which calendar this books onto — Katie's (Calendly) or Soren's (Google Calendar direct)
   };
   // Everyone else on the thread (colleagues looped in via to/cc) who should be cc'd if
   // this draft is sent. Computed in code from thread data, not left to the model.
@@ -159,7 +173,7 @@ const TOOLS: Anthropic.ToolUnion[] = [
   },
 ];
 
-function getSenderIdentity(emailAccount: string): { firstName: string; signOff: string } {
+export function getSenderIdentity(emailAccount: string): { firstName: string; signOff: string } {
   const lower = emailAccount.toLowerCase();
   if (lower.includes('kreg')) {
     return { firstName: 'Kreg', signOff: 'Kreg\nCo-Founder, PeerTeach' };
@@ -334,24 +348,26 @@ WHEN THE PROSPECT PROPOSES SPECIFIC TIMES:
 WHEN NO PREFERENCE GIVEN:
 - Propose 2 times and end with: "Happy to find another time if those don't work." or similar flexibility offer.
 
-NEVER propose more than 2 times in a single reply. Every proposed time gets a tentative hold on Katie's calendar until it's confirmed or declined — more than 2 proposed times means more holds sitting on her calendar for no reason. When both proposed times land on the same day, prefer ones a few hours apart if the calendar allows it — but if the only slots available in the window they asked about are close together (e.g. they said "tomorrow afternoon" and only 1pm and 2:30pm are open), offer those two rather than reaching outside the window they asked about.
+NEVER propose more than 2 times in a single reply. Every proposed time gets a tentative hold on the relevant calendar until it's confirmed or declined — more than 2 proposed times means more holds sitting there for no reason. When both proposed times land on the same day, prefer ones a few hours apart if the calendar allows it — but if the only slots available in the window they asked about are close together (e.g. they said "tomorrow afternoon" and only 1pm and 2:30pm are open), offer those two rather than reaching outside the window they asked about.
 
 book_meeting:
 - Only call when prospect EXPLICITLY confirmed a specific time ("Yes, Thursday 2pm works", "That's perfect")
 - WHO GOES IN name/email (read this carefully — booking the wrong person here has caused a real no-show before): use the identity of whoever is ACTUALLY CONFIRMING and ATTENDING this meeting, which is not always the original cold-email contact. If someone else took over the conversation (forwarded internally, a colleague replied instead, a referral engaged directly — see the cc/loop-in rules above) and THEY are the one confirming the time, THEY are the name/email for this booking, not the original contact. Check "Also on this message:" and the signature/name in their own messages to get this right. The original contact (if now a bystander rather than the attendee) becomes a guest instead, not the primary invitee.
 - You never need anyone's email to invite them. Everyone else on the thread is added to the invite as a guest automatically. If the prospect asked to include colleagues or said others will attend, just book — do not ask for emails.
-- After booking, draft a short confirmation. Do not include any URLs or links. Calendly sends those automatically.
-- REMINDER MENTION — only promise a reminder when there is actually time for one: if the booked meeting is on a FUTURE calendar day (not today, in the prospect's timezone), mention you'll send a reminder on the day of the call ("the morning of" or "day of" is fine). If the meeting is TODAY, do NOT say this — there's no meaningful "morning of" reminder to send for a same-day booking. Just confirm the invite and Zoom link, no reminder line.
-- When the booking came from the agent picking a time within the prospect's stated window: DO state the specific time you booked (they haven't said it yet — you picked it). Include that a calendar invite with the Zoom link has been sent, and apply the reminder-mention rule above.
-- When the prospect explicitly confirmed a specific time they named: DO NOT restate that time — they just said it and the calendar invite shows it. Confirm warmly without parroting the slot, mention the invite and Zoom link, and apply the reminder-mention rule above.
-  - If sending as KATIE, future day: "Perfect, that works on my end. I just sent over a calendar invite with the Zoom link, and I'll send a reminder the morning of. Looking forward to connecting!"
-  - If sending as KATIE, same day (today): "Perfect, that works on my end. I just sent over a calendar invite with the Zoom link. Looking forward to connecting!"
-  - If sending as KREG, future day: "Thanks for getting back to me, that works well. I had my teammate Katie send over a calendar invite with the Zoom link — she'll send a reminder the morning of and will be joining to help with the demo. I left the invite editable, so feel free to add your teammates!"
-  - If sending as KREG, same day (today): "Thanks for getting back to me, that works well. I had my teammate Katie send over a calendar invite with the Zoom link — she'll be joining to help with the demo. I left the invite editable, so feel free to add your teammates!"
-  - If sending as SOREN, future day: "Thanks for getting back to me, that works well. My teammate, Katie, will send over a calendar invite with the Zoom link — she'll send a reminder the morning of and will be helping us with the demo."
-  - If sending as SOREN, same day (today): "Thanks for getting back to me, that works well. My teammate, Katie, will send over a calendar invite with the Zoom link — she'll be helping us with the demo."
+- After booking, draft a short confirmation. Do not include any URLs or links — the calendar invite includes those automatically.
+
+BOOKING HOST — get_available_times and book_meeting both return a "booking_host" / "host" field ('katie' or 'soren'). This tells you who is ACTUALLY hosting the call, which can differ from whose inbox you're replying from (Katie's inbox sometimes overflows onto Soren's calendar when hers is full — check this field, don't assume). Use it to pick the right confirmation template below. Only Katie-hosted bookings go through Calendly, which sends its own reminder email — Soren-hosted bookings do not have an equivalent reminder system, so never promise a reminder for those regardless of who you're sending as.
+
+- When the booking came from the agent picking a time within the prospect's stated window: DO state the specific time you booked (they haven't said it yet — you picked it). Include that a calendar invite has been sent, and apply the reminder rule above.
+- When the prospect explicitly confirmed a specific time they named: DO NOT restate that time — they just said it and the calendar invite shows it. Confirm warmly without parroting the slot, mention the invite, and apply the reminder rule above.
+  - host=katie, sending as KATIE, future day: "Perfect, that works on my end. I just sent over a calendar invite with the Zoom link, and I'll send a reminder the morning of. Looking forward to connecting!"
+  - host=katie, sending as KATIE, same day (today): "Perfect, that works on my end. I just sent over a calendar invite with the Zoom link. Looking forward to connecting!"
+  - host=soren, sending as KATIE (overflow — her calendar was full this window): "Perfect, that works! I've had my colleague Soren send over a calendar invite with the video link — he'll be joining you directly for the call."
+  - host=soren, sending as KREG: "Thanks for getting back to me, that works well. My co-founder Soren will send over a calendar invite with the video link and will be joining you directly."
+  - host=soren, sending as SOREN (himself): "Thanks for getting back to me, that works well. I've sent over a calendar invite with the video link. Looking forward to connecting!"
+  - host=katie should never occur when sending as KREG or SOREN — if it somehow does, treat it as unexpected and escalate rather than guessing which template applies.
 - GUESTS: if the book_meeting result has a non-empty "guests_added" list, the prospect's colleagues were added to the invite. Briefly acknowledge this in the confirmation. If the prospect named them, you may name them (e.g. "I've added Ms. Richbourg and Ms. Pond to the invite as well"); otherwise say "I've included your colleagues on the invite as well." If the prospect said they themselves won't attend, address the reply warmly to the group rather than implying they'll be there ("Looking forward to connecting with the team").
-  - Example (KREG, prospect won't attend, colleagues added): "Hi Nick, perfect! I had my teammate Katie send over a calendar invite with the Zoom link, and I've added Ms. Richbourg and Ms. Pond as well. She'll be joining to help with the demo. Looking forward to connecting with the team."
+  - Example (host=soren, sending as KREG, prospect won't attend, colleagues added): "Hi Nick, perfect! My co-founder Soren will send over a calendar invite with the video link, and I've added Ms. Richbourg and Ms. Pond as well. He'll be joining directly. Looking forward to connecting with the team."
 
 no_reply:
 - Use ONLY for: automated OOO auto-replies (generic "I am out of the office" with no personal content), simple "Thanks!" or "Looking forward to it!" messages where the thread is clearly done
@@ -667,23 +683,59 @@ async function executeToolWithRetry(
   attempt = 0,
   mocks: AgentMocks = {},
   guestEmails: string[] = [],
+  slotHosts: Map<string, BookingHost> = new Map(),
 ): Promise<{ data?: any; specialAction?: AgentResult }> {
   try {
     if (name === 'get_available_times') {
       const tz = (input.timezone as string) || 'America/New_York';
-      const fn = mocks.getAvailableTimes ?? getAvailableTimes;
-      const rawSlots = await fn(input.start_time, input.end_time);
+      const senderHost = getBookingHost(payload.email_account);
+      const sorenEnabled = isSorenBookingEnabled();
 
-      // Deprioritize slots that would create 4+ back-to-back meetings on Katie's calendar
-      // (no break >= MEETING_BREAK_MINUTES). Fails open: if the Google Calendar check
-      // errors or isn't configured, we skip filtering rather than block scheduling.
-      let slots: CalendlySlot[] = rawSlots;
+      let rawSlots: Array<{ startTime: string }> = [];
+      let host: BookingHost = 'katie';
+
+      if (senderHost === 'soren') {
+        // Kreg's or Soren's own inbox — books onto Soren's calendar, but only if he's
+        // currently accepting bookings. With no toggle on, there's no valid calendar to
+        // check against (Katie is explicitly excluded for these inboxes), so return no
+        // availability rather than silently falling back to her calendar.
+        if (!sorenEnabled) {
+          return {
+            data: {
+              requested_time_available: false,
+              suggested_times: [],
+              instruction:
+                'Soren is not currently accepting bookings this week. Do not propose or confirm any times — escalate for manual scheduling instead.',
+            },
+          };
+        }
+        rawSlots = await getSorenAvailableTimes(input.start_time, input.end_time);
+        host = 'soren';
+      } else {
+        const fn = mocks.getAvailableTimes ?? getAvailableTimes;
+        rawSlots = await fn(input.start_time, input.end_time);
+        host = 'katie';
+        // Overflow: Katie's inbox, but her calendar has nothing in this window — if Soren
+        // is taking overflow this week, offer his slots instead of coming back empty.
+        if (rawSlots.length === 0 && sorenEnabled) {
+          const overflow = await getSorenAvailableTimes(input.start_time, input.end_time);
+          if (overflow.length > 0) {
+            rawSlots = overflow;
+            host = 'soren';
+          }
+        }
+      }
+
+      // Deprioritize slots that would create 4+ back-to-back meetings on the relevant
+      // calendar (no break >= MEETING_BREAK_MINUTES). Fails open: if the Google Calendar
+      // check errors or isn't configured, we skip filtering rather than block scheduling.
+      let slots: Array<{ startTime: string }> = rawSlots;
       if (envOptional('GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON')) {
         try {
           const bufferMs = 4 * 60 * 60 * 1000;
           const rangeStart = new Date(new Date(input.start_time).getTime() - bufferMs).toISOString();
           const rangeEnd = new Date(new Date(input.end_time).getTime() + bufferMs).toISOString();
-          const existingMeetings = await getBusyMeetings(rangeStart, rangeEnd);
+          const existingMeetings = await getBusyMeetings(rangeStart, rangeEnd, host === 'soren' ? SOREN_EMAIL : undefined);
           const uncluttered = rawSlots.filter((s) => {
             const end = new Date(new Date(s.startTime).getTime() + 30 * 60 * 1000).toISOString();
             return !wouldExceedConsecutiveMeetings(existingMeetings, s.startTime, end);
@@ -741,9 +793,14 @@ async function executeToolWithRetry(
         natural: naturalTimePhrase(s.startTime, nowForPhrase, tz),
       }));
 
+      // Remember which calendar each offered slot belongs to, so book_meeting (called
+      // later in this same run) knows where to actually book it — the model itself never
+      // needs to know or report this.
+      for (const s of picked) slotHosts.set(s.startTime, host);
+
       // Hold every proposed slot immediately (before a human even reviews the draft) so
-      // Calendly stops offering it to other prospects while this reply is pending. Cheap
-      // (2x30min, spread across different days) and fails open on any error. Awaited
+      // the calendar stops offering it to other prospects while this reply is pending.
+      // Cheap (2x30min, spread across different days) and fails open on any error. Awaited
       // (not fire-and-forget) so the write can't get dropped mid-flight when the
       // serverless function's process freezes after the response is sent.
       if (envOptional('GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON')) {
@@ -756,15 +813,17 @@ async function executeToolWithRetry(
             leadName,
             campaignId: payload.campaign_id,
             label: 'proposed',
+            calendarEmail: host === 'soren' ? SOREN_EMAIL : undefined,
           });
         }
       }
 
-      console.log(`[agent] get_available_times returned ${slots.length} slots, suggesting: ${suggested.map(s => s.natural).join(' | ')}`);
+      console.log(`[agent] get_available_times returned ${slots.length} slots (host=${host}), suggesting: ${suggested.map(s => s.natural).join(' | ')}`);
       return {
         data: {
           requested_time_available: requestedAvailable,
           suggested_times: suggested,
+          booking_host: host, // 'katie' or 'soren' — whoever will actually host if one of these is booked, see BOOKING HOST rules
           instruction: requestedAvailable
             ? 'The requested time is available. Confirm it, referring to it naturally using its "natural" phrasing.'
             : 'Refer to these exact slots in your reply, using the "natural" phrasing for each (e.g. "tomorrow at 1:00 PM CDT"). Do not pick different times.',
@@ -773,11 +832,29 @@ async function executeToolWithRetry(
     }
 
     if (name === 'book_meeting') {
-      // IMPORTANT: we do NOT create the Calendly booking here. Availability was already
-      // verified via get_available_times. The actual booking is created only when a human
-      // approves by clicking Send in Slack (see api/slack-action.ts). Here we just prepare
-      // the booking params so the agent can draft a confirmation and acknowledge guests.
+      // IMPORTANT: we do NOT create the real booking here. Availability was already
+      // verified via get_available_times. The actual booking (Calendly invitee, or a
+      // direct Google Calendar event for Soren) is created only when a human approves by
+      // clicking Send in Slack (see api/slack-action.ts). Here we just prepare the
+      // booking params so the agent can draft a confirmation and acknowledge guests.
       //
+      // Which calendar this books onto was decided when the slot was offered
+      // (get_available_times) — look it up rather than re-deriving it, since Katie-inbox
+      // overflow can land a slot on Soren's calendar even though the sender is Katie.
+      // Falls back to a close-timestamp match, then to the sender's default host, in case
+      // the model confirms a time slightly differently than it was offered.
+      let host = slotHosts.get(input.start_time);
+      if (!host) {
+        const reqMs = new Date(input.start_time).getTime();
+        for (const [iso, h] of slotHosts) {
+          if (Math.abs(new Date(iso).getTime() - reqMs) < 60 * 1000) {
+            host = h;
+            break;
+          }
+        }
+      }
+      if (!host) host = getBookingHost(payload.email_account);
+
       // The prospect has now explicitly confirmed this time, but it can still sit in the
       // Slack approval queue for a while before a human clicks Send — hold it now so
       // nobody else can grab it out from under this booking in the meantime.
@@ -789,10 +866,11 @@ async function executeToolWithRetry(
           leadName: input.name || [payload.firstName, payload.lastName].filter(Boolean).join(' '),
           campaignId: payload.campaign_id,
           label: 'confirmed, awaiting send',
+          calendarEmail: host === 'soren' ? SOREN_EMAIL : undefined,
         });
       }
       console.log(
-        `[agent] book_meeting prepared (books on Send): ${input.start_time}` +
+        `[agent] book_meeting prepared (books on Send, host=${host}): ${input.start_time}` +
           (guestEmails.length ? ` (guests: ${guestEmails.join(', ')})` : ''),
       );
       return {
@@ -803,6 +881,7 @@ async function executeToolWithRetry(
           email: input.email,
           timezone: input.timezone,
           guests_added: guestEmails,
+          host,
         },
         specialAction: undefined,
       };
@@ -839,7 +918,7 @@ async function executeToolWithRetry(
     console.error(`[agent] tool ${name} failed (attempt ${attempt}):`, msg);
     if (attempt < 2) {
       await sleep(500 * Math.pow(2, attempt));
-      return executeToolWithRetry(name, input, payload, attempt + 1, mocks, guestEmails);
+      return executeToolWithRetry(name, input, payload, attempt + 1, mocks, guestEmails, slotHosts);
     }
     return { data: { error: msg } };
   }
@@ -867,6 +946,9 @@ export async function runAgent(
   // 8 gives solid headroom for edge cases without risking runaway loops.
   const MAX_ITERATIONS = 8;
   let pendingBooking: AgentResult['pendingBooking'] | undefined;
+  // Tracks which calendar (Katie's or Soren's) each offered slot belongs to, populated by
+  // get_available_times and read by book_meeting later in the same run.
+  const slotHosts = new Map<string, BookingHost>();
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     console.log(`[agent] iteration ${i + 1}/${MAX_ITERATIONS}`);
@@ -921,7 +1003,7 @@ export async function runAgent(
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
 
       for (const block of toolUseBlocks) {
-        const result = await executeToolWithRetry(block.name, block.input as Record<string, any>, payload, 0, mocks, guestEmails);
+        const result = await executeToolWithRetry(block.name, block.input as Record<string, any>, payload, 0, mocks, guestEmails, slotHosts);
 
         if (result.specialAction) {
           // Carry pendingBooking through even on escalate/hard_no/ooo — if the model had
@@ -938,6 +1020,7 @@ export async function runAgent(
             email: result.data.email,
             timezone: result.data.timezone,
             guests: result.data.guests_added ?? [],
+            host: result.data.host,
           };
         }
 

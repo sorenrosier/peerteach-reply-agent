@@ -1,19 +1,23 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { waitUntil } from '@vercel/functions';
 import crypto from 'crypto';
-import { env, envOptional, validateEnv } from '../src/env';
+import { env, envOptional, validateEnv, SOREN_EMAIL } from '../src/env';
 import { replyToEmail } from '../src/instantly';
 import { bookMeeting } from '../src/calendly';
+import { bookSorenMeeting } from '../src/sorenBooking';
 import { deleteHoldsForLead } from '../src/googleCalendar';
 import { updateViaResponseUrl } from '../src/slack';
 import { SendReplyButtonValue, SlackActionPayload } from '../src/types';
 
 // A human decided what happens with this lead — clear any tentative calendar holds from
-// prior proposals regardless of the outcome (sent, edited elsewhere, or skipped). Fails open.
+// prior proposals regardless of the outcome (sent, edited elsewhere, or skipped). Fails
+// open. Clears both calendars unconditionally rather than threading "which host" through
+// every call site — a release on the calendar that has nothing to release is a harmless no-op.
 async function releaseHolds(leadEmail: string, campaignId: string): Promise<void> {
   if (!envOptional('GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON')) return;
   try {
     await deleteHoldsForLead(leadEmail, campaignId);
+    await deleteHoldsForLead(leadEmail, campaignId, SOREN_EMAIL);
   } catch (err) {
     console.warn('[slack-action] releaseHolds failed:', err instanceof Error ? err.message : String(err));
   }
@@ -161,25 +165,34 @@ async function processAction(
         );
         return;
       }
-      // Book the Calendly meeting FIRST (only happens on this affirmative Send — never on Skip).
+      // Book the meeting FIRST (only happens on this affirmative Send — never on Skip).
       // If booking fails (e.g. the slot was taken since the draft was created), do NOT send
       // the confirmation reply — surface the failure so a human can handle it.
       if (parsed.booking) {
         // Release our OWN tentative hold on this slot BEFORE booking — our hold shows as
-        // busy on Katie's calendar, and Calendly checks that same calendar for conflicts,
-        // so leaving it in place makes Calendly reject the real booking as unavailable
-        // (it thinks the slot is already taken, by us). Clearing it first lets the real
-        // booking go through, which then re-occupies the slot as an actual meeting.
+        // busy on the relevant calendar, and Calendly checks that same calendar for
+        // conflicts, so leaving it in place makes Calendly reject the real booking as
+        // unavailable (it thinks the slot is already taken, by us). Clearing it first lets
+        // the real booking go through, which then re-occupies the slot as an actual meeting.
         await releaseHolds(parsed.lead_email, parsed.campaign_id);
         try {
-          await bookMeeting({
-            startTime: parsed.booking.startTime,
-            name: parsed.booking.name,
-            email: parsed.booking.email,
-            timezone: parsed.booking.timezone,
-            guests: parsed.booking.guests,
-          });
-          console.log('[slack-action] booked on send:', parsed.booking.startTime, 'guests:', parsed.booking.guests.join(', ') || 'none');
+          if (parsed.booking.host === 'soren') {
+            await bookSorenMeeting({
+              startTime: parsed.booking.startTime,
+              name: parsed.booking.name,
+              email: parsed.booking.email,
+              guests: parsed.booking.guests,
+            });
+          } else {
+            await bookMeeting({
+              startTime: parsed.booking.startTime,
+              name: parsed.booking.name,
+              email: parsed.booking.email,
+              timezone: parsed.booking.timezone,
+              guests: parsed.booking.guests,
+            });
+          }
+          console.log('[slack-action] booked on send:', parsed.booking.startTime, `host=${parsed.booking.host}`, 'guests:', parsed.booking.guests.join(', ') || 'none');
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           await updateViaResponseUrl(

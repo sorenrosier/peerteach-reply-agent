@@ -1,8 +1,9 @@
-import { runAgent, AgentResult, computeGuestEmails } from './agent';
+import { runAgent, AgentResult, computeGuestEmails, getBookingHost, getSenderIdentity } from './agent';
 import { replyToEmail, fetchEmailThread } from './instantly';
 import { bookMeeting } from './calendly';
+import { bookSorenMeeting } from './sorenBooking';
 import { deleteHoldsForLead } from './googleCalendar';
-import { envOptional, isAutoSendEnabled } from './env';
+import { envOptional, isAutoSendEnabled, isSorenBookingEnabled, SOREN_EMAIL } from './env';
 import {
   postAgentDraft,
   postAutoSentNotification,
@@ -22,20 +23,29 @@ async function autoSendDraft(payload: InstantlyWebhookPayload, result: AgentResu
   if (result.pendingBooking) {
     if (envOptional('GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON')) {
       try {
-        await deleteHoldsForLead(payload.lead_email, payload.campaign_id);
+        await deleteHoldsForLead(payload.lead_email, payload.campaign_id, result.pendingBooking.host === 'soren' ? SOREN_EMAIL : undefined);
       } catch (err) {
         console.warn('[router] autoSendDraft: deleteHoldsForLead failed:', err instanceof Error ? err.message : String(err));
       }
     }
     try {
-      await bookMeeting({
-        startTime: result.pendingBooking.startTime,
-        name: result.pendingBooking.name,
-        email: result.pendingBooking.email,
-        timezone: result.pendingBooking.timezone,
-        guests: result.pendingBooking.guests,
-      });
-      console.log('[router] autoSendDraft: booked', result.pendingBooking.startTime);
+      if (result.pendingBooking.host === 'soren') {
+        await bookSorenMeeting({
+          startTime: result.pendingBooking.startTime,
+          name: result.pendingBooking.name,
+          email: result.pendingBooking.email,
+          guests: result.pendingBooking.guests,
+        });
+      } else {
+        await bookMeeting({
+          startTime: result.pendingBooking.startTime,
+          name: result.pendingBooking.name,
+          email: result.pendingBooking.email,
+          timezone: result.pendingBooking.timezone,
+          guests: result.pendingBooking.guests,
+        });
+      }
+      console.log('[router] autoSendDraft: booked', result.pendingBooking.startTime, `(host=${result.pendingBooking.host})`);
     } catch (err) {
       // Slot may no longer be available — do NOT send the confirmation. Escalate with
       // the drafted text still attached so a human can pick up from here.
@@ -75,10 +85,12 @@ export async function routeReply(payload: InstantlyWebhookPayload): Promise<void
 
   // A new reply means any calendar holds from prior offers to this lead are now stale —
   // whatever they said (confirmed a time, asked for different times, or something else
-  // entirely), clear them before the agent decides what's next. Fails open.
+  // entirely), clear them before the agent decides what's next. Fails open. Cleared on
+  // both calendars since which one a prior message landed on isn't known yet here.
   if (envOptional('GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON')) {
     try {
       await deleteHoldsForLead(payload.lead_email, payload.campaign_id);
+      await deleteHoldsForLead(payload.lead_email, payload.campaign_id, SOREN_EMAIL);
     } catch (err) {
       console.warn('[router] deleteHoldsForLead failed:', err instanceof Error ? err.message : String(err));
     }
@@ -141,6 +153,44 @@ export async function routeReply(payload: InstantlyWebhookPayload): Promise<void
         pendingBooking: result.pendingBooking,
       };
       result = forcedEscalation;
+    }
+  }
+
+  // Deterministic: Kreg's and Soren's inbox threads book onto Soren's calendar (not
+  // Katie's), but only while he's actually accepting bookings this week. With the toggle
+  // off there is no valid calendar to schedule against for these inboxes — Katie is
+  // intentionally excluded as a fallback — so force human review rather than letting the
+  // model improvise or the get_available_times "no availability" response confuse it.
+  if (result.action === 'draft' && result.draft) {
+    if (getBookingHost(payload.email_account) === 'soren' && !isSorenBookingEnabled()) {
+      console.log('[router] Soren-booking is off and this thread routes to his calendar — forcing escalation');
+      const forced: AgentResult = {
+        action: 'escalate',
+        reason: 'Soren is not accepting bookings this week (SOREN_BOOKING_ENABLED is off) — this inbox routes to his calendar, not Katie\'s, so it needs manual scheduling until he turns it back on.',
+        draft: result.draft,
+        ccEmails: result.ccEmails,
+        pendingBooking: result.pendingBooking,
+      };
+      result = forced;
+    }
+  }
+
+  // Deterministic: Soren's own inbox always escalates, full stop, regardless of the
+  // booking toggle above. This is personal, high-touch outreach (case studies, grant
+  // partnerships, etc.) — an auto-sent reply from this inbox has already gone out with
+  // wrong information once (checked Katie's calendar instead of his own) and he does not
+  // want that risk again, so nothing from this inbox auto-sends, ever.
+  if (result.action === 'draft' && result.draft) {
+    if (getSenderIdentity(payload.email_account).firstName === 'Soren') {
+      console.log('[router] Soren\'s own inbox — forcing escalation (never auto-send)');
+      const forced: AgentResult = {
+        action: 'escalate',
+        reason: "Soren's inbox — always escalate for human review. Personal, high-touch outreach from this inbox never auto-sends.",
+        draft: result.draft,
+        ccEmails: result.ccEmails,
+        pendingBooking: result.pendingBooking,
+      };
+      result = forced;
     }
   }
 

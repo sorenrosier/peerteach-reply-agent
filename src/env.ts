@@ -26,7 +26,15 @@ const OPTIONAL_VARS = [
   'HOLD_TTL_HOURS',
   'CRON_SECRET',
   'AUTO_SEND_ENABLED',
+  'SOREN_BOOKING_ENABLED',
 ] as const;
+
+// Soren's own calendar is booked directly via Google Calendar (no separate Calendly
+// account for him) — impersonated through the same domain-wide-delegation service
+// account already used for Katie's calendar, just with a different `sub` email.
+export const SOREN_EMAIL = 'soren@peerteach.org';
+// He only takes calls in this window, in his own local time (ET).
+export const SOREN_WORKING_HOURS_ET = { startHour: 12, endHour: 18 };
 
 type RequiredVar = (typeof REQUIRED_VARS)[number];
 type OptionalVar = (typeof OPTIONAL_VARS)[number];
@@ -83,4 +91,11 @@ export function isAutoBookEnabled(): boolean {
 // var change alone won't affect already-running functions until the next deploy.
 export function isAutoSendEnabled(): boolean {
   return process.env.AUTO_SEND_ENABLED === 'true';
+}
+
+// Manual weekly on/off switch for booking meetings onto Soren's own calendar. Soren
+// flips this himself (Vercel env var + redeploy) for the week(s) he wants to take
+// meetings — defaults to off, and stays off until he explicitly turns it back on.
+export function isSorenBookingEnabled(): boolean {
+  return process.env.SOREN_BOOKING_ENABLED === 'true';
 }

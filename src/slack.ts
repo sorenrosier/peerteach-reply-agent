@@ -89,6 +89,12 @@ export function replySubject(subject: string): string {
   return /^re:/i.test(s) ? s : `Re: ${s}`;
 }
 
+// Which calendar a pending booking targets — shown on approval cards so reviewers aren't
+// surprised by which calendar/inbox actually gets the meeting.
+function hostLabel(host: 'katie' | 'soren'): string {
+  return host === 'soren' ? "Soren's calendar" : "Katie's calendar";
+}
+
 // Human-readable booking time for the Slack approval card, in the prospect's timezone.
 export function formatBookingTime(startTimeIso: string, timezone: string): string {
   try {
@@ -263,7 +269,7 @@ export async function postEscalateNotification(
     if (pendingBooking) {
       blocks.push({
         type: 'context',
-        elements: [{ type: 'mrkdwn', text: `:calendar: *Will book on Send:* ${formatBookingTime(pendingBooking.startTime, pendingBooking.timezone)}${pendingBooking.guests.length ? `  ·  guests: ${pendingBooking.guests.join(', ')}` : ''}` }],
+        elements: [{ type: 'mrkdwn', text: `:calendar: *Will book on Send (${hostLabel(pendingBooking.host)}):* ${formatBookingTime(pendingBooking.startTime, pendingBooking.timezone)}${pendingBooking.guests.length ? `  ·  guests: ${pendingBooking.guests.join(', ')}` : ''}` }],
       });
     }
 
@@ -461,7 +467,7 @@ export async function postAgentDraft(
     },
     ...(result.booked && result.pendingBooking ? [{
       type: 'context',
-      elements: [{ type: 'mrkdwn', text: `:calendar: *Will book on Send:* ${formatBookingTime(result.pendingBooking.startTime, result.pendingBooking.timezone)}${result.pendingBooking.guests.length ? `  ·  guests: ${result.pendingBooking.guests.join(', ')}` : ''}` }],
+      elements: [{ type: 'mrkdwn', text: `:calendar: *Will book on Send (${hostLabel(result.pendingBooking.host)}):* ${formatBookingTime(result.pendingBooking.startTime, result.pendingBooking.timezone)}${result.pendingBooking.guests.length ? `  ·  guests: ${result.pendingBooking.guests.join(', ')}` : ''}` }],
     }] : []),
     {
       type: 'section',
@@ -526,7 +532,7 @@ export async function postAutoSentNotification(
     }] : []),
     ...(result.booked && result.pendingBooking ? [{
       type: 'context',
-      elements: [{ type: 'mrkdwn', text: `:calendar: *Booked:* ${formatBookingTime(result.pendingBooking.startTime, result.pendingBooking.timezone)}${result.pendingBooking.guests.length ? `  ·  guests: ${result.pendingBooking.guests.join(', ')}` : ''}` }],
+      elements: [{ type: 'mrkdwn', text: `:calendar: *Booked (${hostLabel(result.pendingBooking.host)}):* ${formatBookingTime(result.pendingBooking.startTime, result.pendingBooking.timezone)}${result.pendingBooking.guests.length ? `  ·  guests: ${result.pendingBooking.guests.join(', ')}` : ''}` }],
     }] : []),
     {
       type: 'section',
