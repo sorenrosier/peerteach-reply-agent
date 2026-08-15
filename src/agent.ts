@@ -326,6 +326,7 @@ get_available_times:
 - Refer to times naturally, the way a person speaks. Each suggested time has a "natural" field already phrased for you ("tomorrow at 1:00 PM CDT", "this Thursday at 2:00 PM CDT", "next Monday at 10:00 AM CDT"). Use that phrasing — do NOT write rigid dates like "Monday, June 9 at 1:00 PM" unless the "natural" field itself uses a date (which only happens for times more than two weeks out).
 - The "natural" field already includes the timezone abbreviation — keep it so there's no ambiguity. Do not strip it.
 - Always refer to the meeting as "a quick 30-minute chat" or "a quick 30-minute Zoom"
+- If booking_host is 'soren' AND you're sending as KATIE (this is the overflow case — her calendar had nothing in this window), frame it as a nice option, not an apology or a downgrade: mention these are Soren's times, PeerTeach's founder and a researcher at Stanford's Graduate School of Education. Keep it warm and brief, not a sales pitch. Example: "I can get you set up with Soren, PeerTeach's founder and a researcher at Stanford's Graduate School of Education. He's got a couple of times open: ..." Don't do this when sending as KREG or SOREN himself — only for Katie's overflow case, since Kreg is already a co-founder and doesn't need introducing, and Soren doesn't need to introduce himself.
 - If the prospect specified two separate day/time constraints (e.g. "Tuesday or Thursday afternoon"), make TWO separate calls with targeted ranges — one for each constraint. Do not use one wide range that includes irrelevant times in between.
 
 WHEN THE PROSPECT NAMES A DAY WITH A TIME WINDOW (e.g. "after 1pm Tuesday", "Thursday afternoon", "anytime after 2 on Wednesday"):
@@ -362,7 +363,7 @@ BOOKING HOST — get_available_times and book_meeting both return a "booking_hos
 - When the prospect explicitly confirmed a specific time they named: DO NOT restate that time — they just said it and the calendar invite shows it. Confirm warmly without parroting the slot, mention the invite, and apply the reminder rule above.
   - host=katie, sending as KATIE, future day: "Perfect, that works on my end. I just sent over a calendar invite with the Zoom link, and I'll send a reminder the morning of. Looking forward to connecting!"
   - host=katie, sending as KATIE, same day (today): "Perfect, that works on my end. I just sent over a calendar invite with the Zoom link. Looking forward to connecting!"
-  - host=soren, sending as KATIE (overflow — her calendar was full this window): "Perfect, that works! I've had my colleague Soren send over a calendar invite with the video link — he'll be joining you directly for the call."
+  - host=soren, sending as KATIE (overflow, her calendar was full this window): "Perfect, that works! I've got you set up with Soren, PeerTeach's founder and a researcher at Stanford's Graduate School of Education. He'll send over a calendar invite with the video link and will be joining you directly."
   - host=soren, sending as KREG: "Thanks for getting back to me, that works well. My co-founder Soren will send over a calendar invite with the video link and will be joining you directly."
   - host=soren, sending as SOREN (himself): "Thanks for getting back to me, that works well. I've sent over a calendar invite with the video link. Looking forward to connecting!"
   - host=katie should never occur when sending as KREG or SOREN — if it somehow does, treat it as unexpected and escalate rather than guessing which template applies.
@@ -819,14 +820,22 @@ async function executeToolWithRetry(
       }
 
       console.log(`[agent] get_available_times returned ${slots.length} slots (host=${host}), suggesting: ${suggested.map(s => s.natural).join(' | ')}`);
+      let instruction = requestedAvailable
+        ? 'The requested time is available. Confirm it, referring to it naturally using its "natural" phrasing.'
+        : 'Refer to these exact slots in your reply, using the "natural" phrasing for each (e.g. "tomorrow at 1:00 PM CDT"). Do not pick different times.';
+      // Surface this right next to the data the model is about to use, rather than relying
+      // on it to recall a rule from elsewhere in the system prompt — a static rule alone
+      // was not reliably followed here in testing.
+      if (host === 'soren' && senderHost === 'katie') {
+        instruction +=
+          ' IMPORTANT: these are Soren\'s times (Katie\'s calendar had nothing this window) — Soren is PeerTeach\'s founder and a researcher at Stanford\'s Graduate School of Education. Mention that warmly when offering these, framed as a nice option, not an apology.';
+      }
       return {
         data: {
           requested_time_available: requestedAvailable,
           suggested_times: suggested,
           booking_host: host, // 'katie' or 'soren' — whoever will actually host if one of these is booked, see BOOKING HOST rules
-          instruction: requestedAvailable
-            ? 'The requested time is available. Confirm it, referring to it naturally using its "natural" phrasing.'
-            : 'Refer to these exact slots in your reply, using the "natural" phrasing for each (e.g. "tomorrow at 1:00 PM CDT"). Do not pick different times.',
+          instruction,
         },
       };
     }
@@ -839,10 +848,9 @@ async function executeToolWithRetry(
       // booking params so the agent can draft a confirmation and acknowledge guests.
       //
       // Which calendar this books onto was decided when the slot was offered
-      // (get_available_times) — look it up rather than re-deriving it, since Katie-inbox
-      // overflow can land a slot on Soren's calendar even though the sender is Katie.
-      // Falls back to a close-timestamp match, then to the sender's default host, in case
-      // the model confirms a time slightly differently than it was offered.
+      // (get_available_times) — check that first, since Katie-inbox overflow can land a
+      // slot on Soren's calendar even though the sender is Katie. Falls back to a
+      // close-timestamp match for a slightly-different confirmed time.
       let host = slotHosts.get(input.start_time);
       if (!host) {
         const reqMs = new Date(input.start_time).getTime();
@@ -853,7 +861,34 @@ async function executeToolWithRetry(
           }
         }
       }
-      if (!host) host = getBookingHost(payload.email_account);
+      // Neither matched — this happens when the prospect confirms a time that was offered
+      // in an EARLIER reply (a separate runAgent call, with no memory of that offer) rather
+      // than one just checked in this same run. slotHosts only lives for one run, and holds
+      // from the prior run were already cleared at the top of this one, so there's no
+      // record left to trust. Re-derive from real calendar state instead of assuming the
+      // sender's default host — otherwise a confirmed Katie-overflow slot would silently
+      // get booked back onto her calendar instead of the one it was actually offered from.
+      if (!host) {
+        const senderHost = getBookingHost(payload.email_account);
+        host = senderHost;
+        if (senderHost === 'katie' && isSorenBookingEnabled()) {
+          try {
+            const checkStart = input.start_time;
+            const checkEnd = new Date(new Date(input.start_time).getTime() + 35 * 60000).toISOString();
+            const reqMs = new Date(input.start_time).getTime();
+            const fn = mocks.getAvailableTimes ?? getAvailableTimes;
+            const katieSlots = await fn(checkStart, checkEnd);
+            const katieHasIt = katieSlots.some((s) => Math.abs(new Date(s.startTime).getTime() - reqMs) < 60 * 1000);
+            if (!katieHasIt) {
+              const sorenSlots = await getSorenAvailableTimes(checkStart, checkEnd);
+              const sorenHasIt = sorenSlots.some((s) => Math.abs(new Date(s.startTime).getTime() - reqMs) < 60 * 1000);
+              if (sorenHasIt) host = 'soren';
+            }
+          } catch (err) {
+            console.warn('[agent] book_meeting host re-derivation failed, defaulting to sender host:', err instanceof Error ? err.message : String(err));
+          }
+        }
+      }
 
       // The prospect has now explicitly confirmed this time, but it can still sit in the
       // Slack approval queue for a while before a human clicks Send — hold it now so
