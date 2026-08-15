@@ -1,7 +1,6 @@
 import axios from 'axios';
-import crypto from 'crypto';
 import { getBusyMeetings, getAccessToken } from './googleCalendar';
-import { SOREN_EMAIL, SOREN_WORKING_HOURS_ET } from './env';
+import { SOREN_EMAIL, SOREN_WORKING_HOURS_ET, SOREN_ZOOM_URL } from './env';
 
 // Soren has no separate Calendly account — his calendar is booked directly via the same
 // Google Calendar domain-wide-delegation access already used for Katie's holds, just
@@ -60,7 +59,7 @@ export async function getSorenAvailableTimes(
 export interface SorenBookingResult {
   id: string;
   startTime: string;
-  meetLink: string;
+  locationUrl: string;
 }
 
 export async function bookSorenMeeting(params: {
@@ -86,16 +85,13 @@ export async function bookSorenMeeting(params: {
         timeZone: 'America/New_York',
       },
       attendees,
-      conferenceData: {
-        createRequest: {
-          requestId: crypto.randomUUID(),
-          conferenceSolutionKey: { type: 'hangoutsMeet' },
-        },
-      },
+      // His own personal Zoom room, not an auto-generated Google Meet link.
+      location: SOREN_ZOOM_URL,
+      description: `Join Zoom: ${SOREN_ZOOM_URL}`,
     },
     {
       headers: { Authorization: `Bearer ${token}` },
-      params: { conferenceDataVersion: 1, sendUpdates: 'all' },
+      params: { sendUpdates: 'all' },
       timeout: 10000,
     },
   );
@@ -103,6 +99,6 @@ export async function bookSorenMeeting(params: {
   return {
     id: res.data.id as string,
     startTime: params.startTime,
-    meetLink: res.data.hangoutLink ?? res.data.conferenceData?.entryPoints?.[0]?.uri ?? '',
+    locationUrl: SOREN_ZOOM_URL,
   };
 }

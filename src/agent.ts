@@ -179,7 +179,7 @@ export function getSenderIdentity(emailAccount: string): { firstName: string; si
     return { firstName: 'Kreg', signOff: 'Kreg\nCo-Founder, PeerTeach' };
   }
   if (lower.includes('soren')) {
-    return { firstName: 'Soren', signOff: 'Soren\nCo-Founder, PeerTeach' };
+    return { firstName: 'Soren', signOff: 'Soren Rosier, Ph.D.\nFounder & CEO, PeerTeach\nLecturer, Stanford Graduate School of Education' };
   }
   return { firstName: 'Katie', signOff: '-Katie.' };
 }

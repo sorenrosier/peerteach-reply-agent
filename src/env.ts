@@ -35,6 +35,9 @@ const OPTIONAL_VARS = [
 export const SOREN_EMAIL = 'soren@peerteach.org';
 // He only takes calls in this window, in his own local time (ET).
 export const SOREN_WORKING_HOURS_ET = { startHour: 12, endHour: 18 };
+// His personal Zoom room — every meeting booked onto his calendar uses this, not an
+// auto-generated Google Meet link.
+export const SOREN_ZOOM_URL = 'https://us06web.zoom.us/j/6388859556?pwd=Pimuxq3bTVo8aQr2dVuK2EIWWqYR7y.1';
 
 type RequiredVar = (typeof REQUIRED_VARS)[number];
 type OptionalVar = (typeof OPTIONAL_VARS)[number];
