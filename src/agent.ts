@@ -61,8 +61,8 @@ const TOOLS: Anthropic.ToolUnion[] = [
     description:
       'Fetch real available meeting slots from the calendar for a date range. ' +
       'Use whenever you need to propose times OR verify whether a requested time is available. ' +
-      'Calendly has a 7-day window limit per call — make multiple calls for wider ranges. ' +
-      'Returns a list of available start times in ISO UTC format.',
+      'Keep ranges to 7 days or less per call — make multiple calls for wider ranges. ' +
+      'Returns a list of available start times in ISO UTC format, plus which calendar ("booking_host") they belong to.',
     input_schema: {
       type: 'object' as const,
       properties: {
@@ -89,10 +89,10 @@ const TOOLS: Anthropic.ToolUnion[] = [
   {
     name: 'book_meeting',
     description:
-      'Book a meeting in Calendly. Only call this when the prospect has EXPLICITLY confirmed a specific time — ' +
+      'Book the meeting onto the correct calendar. Only call this when the prospect has EXPLICITLY confirmed a specific time — ' +
       'e.g. "Yes, Thursday at 2pm works" or "That time works for me". ' +
       'Do NOT call this for general interest or ambiguous replies. ' +
-      'The prospect will receive a Calendly confirmation email automatically.',
+      'The prospect will receive a calendar invite automatically.',
     input_schema: {
       type: 'object' as const,
       properties: {

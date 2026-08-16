@@ -237,19 +237,19 @@ async function processAction(
     case 'edit_send': {
       // Manual takeover in Unibox — we do NOT auto-book here, because the human may change
       // the time while editing. If the reply confirms a meeting, warn them to book it.
-      let hasBooking = false;
-      let editParsed: { lead_email?: string; campaign_id?: string } = {};
+      let editParsed: Partial<SendReplyButtonValue> = {};
       try {
         editParsed = JSON.parse(action.value) as Partial<SendReplyButtonValue>;
-        hasBooking = !!(editParsed as Partial<SendReplyButtonValue>).booking;
       } catch {}
+      const hasBooking = !!editParsed.booking;
       // Only release holds if this draft was confirming a specific booking — a plain
       // "offering times" draft being edited should keep its holds, same as Send Reply.
       if (hasBooking && editParsed.lead_email && editParsed.campaign_id) {
         await releaseHolds(editParsed.lead_email, editParsed.campaign_id);
       }
+      const bookVia = editParsed.booking?.host === 'soren' ? "on Soren's calendar" : 'in Calendly';
       const note = hasBooking
-        ? ' :warning: This reply confirms a meeting that is NOT booked yet. Book it in Calendly manually, or use *Send Reply* to auto-book.'
+        ? ` :warning: This reply confirms a meeting that is NOT booked yet. Book it ${bookVia} manually, or use *Send Reply* to auto-book.`
         : '';
       await updateViaResponseUrl(
         payload.response_url,

@@ -5,7 +5,7 @@
   "functions": {
     "api/webhook.ts": { "maxDuration": 60 },
     "api/slack-action.ts": { "maxDuration": 60 },
-    "api/cleanup-holds.ts": { "maxDuration": 30 }
+    "api/cleanup-holds.ts": { "maxDuration": 60 }
   },
   "crons": [
     { "path": "/api/cleanup-holds", "schedule": "0 * * * *" }

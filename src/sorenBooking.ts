@@ -68,6 +68,20 @@ export async function bookSorenMeeting(params: {
   email: string;
   guests?: string[];
 }): Promise<SorenBookingResult> {
+  const endTime = new Date(new Date(params.startTime).getTime() + SLOT_MINUTES * 60000).toISOString();
+
+  // Unlike Calendly, plain Google Calendar event creation does not reject overlaps on its
+  // own. The caller already released any tentative hold on this slot before calling here,
+  // so anything found now is a real conflict (e.g. he grabbed the slot himself, or another
+  // booking landed here in the meantime) — abort rather than silently double-booking him.
+  const busy = await getBusyMeetings(params.startTime, endTime, SOREN_EMAIL);
+  const conflict = busy.find(
+    (b) => new Date(params.startTime).getTime() < new Date(b.end).getTime() && new Date(endTime).getTime() > new Date(b.start).getTime(),
+  );
+  if (conflict) {
+    throw new Error(`Soren's calendar has a conflict at this time: "${conflict.summary}"`);
+  }
+
   const token = await getAccessToken(SOREN_EMAIL);
 
   const attendees = [
@@ -80,10 +94,7 @@ export async function bookSorenMeeting(params: {
     {
       summary: `${params.name} <> Soren`,
       start: { dateTime: params.startTime, timeZone: 'America/New_York' },
-      end: {
-        dateTime: new Date(new Date(params.startTime).getTime() + SLOT_MINUTES * 60000).toISOString(),
-        timeZone: 'America/New_York',
-      },
+      end: { dateTime: endTime, timeZone: 'America/New_York' },
       attendees,
       // His own personal Zoom room, not an auto-generated Google Meet link.
       location: SOREN_ZOOM_URL,
