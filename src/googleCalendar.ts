@@ -213,7 +213,15 @@ export async function deleteExpiredHolds(calendarEmail?: string): Promise<{ chec
     headers: { Authorization: `Bearer ${token}` },
     params: {
       privateExtendedProperty: 'peerteach_hold=true',
-      timeMin: new Date().toISOString(),
+      // Looks backward too, not just forward from now — a hold whose OFFERED slot time
+      // has already lapsed (nobody ever replied to confirm or decline it) is exactly the
+      // kind of thing this sweep should catch, but a forward-only timeMin made it
+      // invisible to this query no matter how stale it got (found in production: a hold
+      // from 5 days ago was still sitting on the calendar, well past HOLD_TTL_HOURS).
+      // Symmetric with the 60-day forward window below — the created_at check just below
+      // is what actually decides deletion, this only needs to be wide enough to surface
+      // every candidate.
+      timeMin: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString(),
       timeMax: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString(),
       maxResults: 250,
     },
