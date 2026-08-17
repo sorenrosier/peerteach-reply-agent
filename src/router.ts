@@ -1,4 +1,4 @@
-import { runAgent, AgentResult, computeGuestEmails, getBookingHost, getSenderIdentity } from './agent';
+import { runAgent, AgentResult, computeGuestEmails, getBookingHost } from './agent';
 import { replyToEmail, fetchEmailThread } from './instantly';
 import { bookMeeting } from './calendly';
 import { bookSorenMeeting } from './sorenBooking';
@@ -167,25 +167,6 @@ export async function routeReply(payload: InstantlyWebhookPayload): Promise<void
       const forced: AgentResult = {
         action: 'escalate',
         reason: 'Soren is not accepting bookings this week (SOREN_BOOKING_ENABLED is off) — this inbox routes to his calendar, not Katie\'s, so it needs manual scheduling until he turns it back on.',
-        draft: result.draft,
-        ccEmails: result.ccEmails,
-        pendingBooking: result.pendingBooking,
-      };
-      result = forced;
-    }
-  }
-
-  // Deterministic: Soren's own inbox always escalates, full stop, regardless of the
-  // booking toggle above. This is personal, high-touch outreach (case studies, grant
-  // partnerships, etc.) — an auto-sent reply from this inbox has already gone out with
-  // wrong information once (checked Katie's calendar instead of his own) and he does not
-  // want that risk again, so nothing from this inbox auto-sends, ever.
-  if (result.action === 'draft' && result.draft) {
-    if (getSenderIdentity(payload.email_account).firstName === 'Soren') {
-      console.log('[router] Soren\'s own inbox — forcing escalation (never auto-send)');
-      const forced: AgentResult = {
-        action: 'escalate',
-        reason: "Soren's inbox — always escalate for human review. Personal, high-touch outreach from this inbox never auto-sends.",
         draft: result.draft,
         ccEmails: result.ccEmails,
         pendingBooking: result.pendingBooking,
