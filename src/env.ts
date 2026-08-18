@@ -27,6 +27,7 @@ const OPTIONAL_VARS = [
   'CRON_SECRET',
   'AUTO_SEND_ENABLED',
   'SOREN_BOOKING_ENABLED',
+  'SOREN_BOOKING_ALLOWLIST',
 ] as const;
 
 // Soren's own calendar is booked directly via Google Calendar (no separate Calendly
@@ -101,4 +102,17 @@ export function isAutoSendEnabled(): boolean {
 // meetings — defaults to off, and stays off until he explicitly turns it back on.
 export function isSorenBookingEnabled(): boolean {
   return process.env.SOREN_BOOKING_ENABLED === 'true';
+}
+
+// Per-lead exception to the toggle above: comma-separated lead emails that should still
+// be able to book with Soren even while the global toggle is off. For prospects who were
+// already offered his times before he turned bookings off — lets those specific,
+// already-in-flight conversations complete instead of being cut off mid-negotiation.
+export function isSorenBookingEnabledForLead(leadEmail: string): boolean {
+  if (isSorenBookingEnabled()) return true;
+  const allowlist = (envOptional('SOREN_BOOKING_ALLOWLIST') || '')
+    .split(',')
+    .map((e) => e.toLowerCase().trim())
+    .filter(Boolean);
+  return allowlist.includes((leadEmail || '').toLowerCase().trim());
 }

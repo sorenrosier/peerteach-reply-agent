@@ -3,7 +3,7 @@ import { replyToEmail, fetchEmailThread } from './instantly';
 import { bookMeeting } from './calendly';
 import { bookSorenMeeting } from './sorenBooking';
 import { deleteHoldsForLead } from './googleCalendar';
-import { envOptional, isAutoSendEnabled, isSorenBookingEnabled, SOREN_EMAIL } from './env';
+import { envOptional, isAutoSendEnabled, isSorenBookingEnabledForLead, SOREN_EMAIL } from './env';
 import {
   postAgentDraft,
   postAutoSentNotification,
@@ -157,12 +157,13 @@ export async function routeReply(payload: InstantlyWebhookPayload): Promise<void
   }
 
   // Deterministic: Kreg's and Soren's inbox threads book onto Soren's calendar (not
-  // Katie's), but only while he's actually accepting bookings this week. With the toggle
-  // off there is no valid calendar to schedule against for these inboxes — Katie is
-  // intentionally excluded as a fallback — so force human review rather than letting the
-  // model improvise or the get_available_times "no availability" response confuse it.
+  // Katie's), but only while he's actually accepting bookings this week (or the lead is on
+  // the allowlist — an already-in-flight conversation that should be allowed to finish).
+  // With the toggle off and no allowlist match, there is no valid calendar to schedule
+  // against for these inboxes — Katie is intentionally excluded as a fallback — so force
+  // human review rather than letting the model improvise or a confusing tool response happen.
   if (result.action === 'draft' && result.draft) {
-    if (getBookingHost(payload.email_account) === 'soren' && !isSorenBookingEnabled()) {
+    if (getBookingHost(payload.email_account) === 'soren' && !isSorenBookingEnabledForLead(payload.lead_email)) {
       console.log('[router] Soren-booking is off and this thread routes to his calendar — forcing escalation');
       const forced: AgentResult = {
         action: 'escalate',

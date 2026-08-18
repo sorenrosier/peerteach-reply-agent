@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { env, envOptional, isSorenBookingEnabled, SOREN_EMAIL } from './env';
+import { env, envOptional, isSorenBookingEnabledForLead, SOREN_EMAIL } from './env';
 import { getAvailableTimes, bookMeeting } from './calendly';
 import { getSorenAvailableTimes } from './sorenBooking';
 import { getBusyMeetings, wouldExceedConsecutiveMeetings, createHold } from './googleCalendar';
@@ -695,7 +695,7 @@ async function executeToolWithRetry(
     if (name === 'get_available_times') {
       const tz = (input.timezone as string) || 'America/New_York';
       const senderHost = getBookingHost(payload.email_account);
-      const sorenEnabled = isSorenBookingEnabled();
+      const sorenEnabled = isSorenBookingEnabledForLead(payload.lead_email);
 
       let rawSlots: Array<{ startTime: string }> = [];
       let host: BookingHost = 'katie';
@@ -876,7 +876,7 @@ async function executeToolWithRetry(
       if (!host) {
         const senderHost = getBookingHost(payload.email_account);
         host = senderHost;
-        if (senderHost === 'katie' && isSorenBookingEnabled()) {
+        if (senderHost === 'katie' && isSorenBookingEnabledForLead(payload.lead_email)) {
           try {
             const checkStart = input.start_time;
             const checkEnd = new Date(new Date(input.start_time).getTime() + 35 * 60000).toISOString();
