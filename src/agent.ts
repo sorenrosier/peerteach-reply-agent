@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { env, envOptional, isSorenBookingEnabledForLead, SOREN_EMAIL } from './env';
+import { env, envOptional, isSorenBookingEnabled, SOREN_EMAIL } from './env';
 import { getAvailableTimes, bookMeeting } from './calendly';
 import { getSorenAvailableTimes } from './sorenBooking';
 import { getBusyMeetings, wouldExceedConsecutiveMeetings, createHold } from './googleCalendar';
@@ -690,12 +690,13 @@ async function executeToolWithRetry(
   mocks: AgentMocks = {},
   guestEmails: string[] = [],
   slotHosts: Map<string, BookingHost> = new Map(),
+  hadSorenHold = false,
 ): Promise<{ data?: any; specialAction?: AgentResult }> {
   try {
     if (name === 'get_available_times') {
       const tz = (input.timezone as string) || 'America/New_York';
       const senderHost = getBookingHost(payload.email_account);
-      const sorenEnabled = isSorenBookingEnabledForLead(payload.lead_email);
+      const sorenEnabled = isSorenBookingEnabled() || hadSorenHold;
 
       let rawSlots: Array<{ startTime: string }> = [];
       let host: BookingHost = 'katie';
@@ -876,7 +877,7 @@ async function executeToolWithRetry(
       if (!host) {
         const senderHost = getBookingHost(payload.email_account);
         host = senderHost;
-        if (senderHost === 'katie' && isSorenBookingEnabledForLead(payload.lead_email)) {
+        if (senderHost === 'katie' && (isSorenBookingEnabled() || hadSorenHold)) {
           try {
             const checkStart = input.start_time;
             const checkEnd = new Date(new Date(input.start_time).getTime() + 35 * 60000).toISOString();
@@ -958,7 +959,7 @@ async function executeToolWithRetry(
     console.error(`[agent] tool ${name} failed (attempt ${attempt}):`, msg);
     if (attempt < 2) {
       await sleep(500 * Math.pow(2, attempt));
-      return executeToolWithRetry(name, input, payload, attempt + 1, mocks, guestEmails, slotHosts);
+      return executeToolWithRetry(name, input, payload, attempt + 1, mocks, guestEmails, slotHosts, hadSorenHold);
     }
     return { data: { error: msg } };
   }
@@ -968,6 +969,10 @@ export async function runAgent(
   payload: InstantlyWebhookPayload,
   thread: ThreadEmail[],
   mocks: AgentMocks = {},
+  // Whether this lead already had a hold on Soren's calendar when this reply started
+  // processing — computed once by the caller (router.ts) before it clears stale holds, and
+  // threaded through so the toggle-off exception for already-in-flight conversations works.
+  hadSorenHold = false,
 ): Promise<AgentResult> {
   const client = new Anthropic({ apiKey: env('ANTHROPIC_API_KEY') });
 
@@ -1043,7 +1048,7 @@ export async function runAgent(
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
 
       for (const block of toolUseBlocks) {
-        const result = await executeToolWithRetry(block.name, block.input as Record<string, any>, payload, 0, mocks, guestEmails, slotHosts);
+        const result = await executeToolWithRetry(block.name, block.input as Record<string, any>, payload, 0, mocks, guestEmails, slotHosts, hadSorenHold);
 
         if (result.specialAction) {
           // Carry pendingBooking through even on escalate/hard_no/ooo — if the model had

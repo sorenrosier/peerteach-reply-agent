@@ -2,8 +2,8 @@ import { runAgent, AgentResult, computeGuestEmails, getBookingHost } from './age
 import { replyToEmail, fetchEmailThread } from './instantly';
 import { bookMeeting } from './calendly';
 import { bookSorenMeeting } from './sorenBooking';
-import { deleteHoldsForLead } from './googleCalendar';
-import { envOptional, isAutoSendEnabled, isSorenBookingEnabledForLead, SOREN_EMAIL } from './env';
+import { deleteHoldsForLead, hasExistingHold } from './googleCalendar';
+import { envOptional, isAutoSendEnabled, isSorenBookingEnabled, SOREN_EMAIL } from './env';
 import {
   postAgentDraft,
   postAutoSentNotification,
@@ -83,6 +83,16 @@ async function autoSendDraft(payload: InstantlyWebhookPayload, result: AgentResu
 export async function routeReply(payload: InstantlyWebhookPayload): Promise<void> {
   console.log(`[router] lead=${payload.lead_email} campaign=${payload.campaign_id}`);
 
+  // Whether this lead already has an active hold on Soren's calendar — checked BEFORE the
+  // stale-hold cleanup below wipes it out. This is what lets an already-in-flight
+  // conversation finish even when Soren isn't accepting new bookings (SOREN_BOOKING_ENABLED
+  // off): no manual exception list to maintain, it just naturally covers whoever's
+  // mid-negotiation and stops applying once their hold is used or expires.
+  let hadSorenHold = false;
+  if (envOptional('GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON')) {
+    hadSorenHold = await hasExistingHold(payload.lead_email, payload.campaign_id, SOREN_EMAIL);
+  }
+
   // A new reply means any calendar holds from prior offers to this lead are now stale —
   // whatever they said (confirmed a time, asked for different times, or something else
   // entirely), clear them before the agent decides what's next. Fails open. Cleared on
@@ -102,7 +112,7 @@ export async function routeReply(payload: InstantlyWebhookPayload): Promise<void
 
   let result;
   try {
-    result = await runAgent(payload, thread);
+    result = await runAgent(payload, thread, {}, hadSorenHold);
   } catch (err) {
     console.error('[router] agent threw:', err instanceof Error ? err.stack : String(err));
     try {
@@ -157,17 +167,18 @@ export async function routeReply(payload: InstantlyWebhookPayload): Promise<void
   }
 
   // Deterministic: Kreg's and Soren's inbox threads book onto Soren's calendar (not
-  // Katie's), but only while he's actually accepting bookings this week (or the lead is on
-  // the allowlist — an already-in-flight conversation that should be allowed to finish).
-  // With the toggle off and no allowlist match, there is no valid calendar to schedule
-  // against for these inboxes — Katie is intentionally excluded as a fallback — so force
-  // human review rather than letting the model improvise or a confusing tool response happen.
+  // Katie's), but only while he's actually accepting bookings this week — or this specific
+  // lead already had a hold on his calendar (an already-in-flight conversation, allowed to
+  // finish). With the toggle off and no existing hold, there is no valid calendar to
+  // schedule against for these inboxes — Katie is intentionally excluded as a fallback —
+  // so force human review rather than letting the model improvise or a confusing tool
+  // response happen.
   if (result.action === 'draft' && result.draft) {
-    if (getBookingHost(payload.email_account) === 'soren' && !isSorenBookingEnabledForLead(payload.lead_email)) {
+    if (getBookingHost(payload.email_account) === 'soren' && !isSorenBookingEnabled() && !hadSorenHold) {
       console.log('[router] Soren-booking is off and this thread routes to his calendar — forcing escalation');
       const forced: AgentResult = {
         action: 'escalate',
-        reason: 'Soren is not accepting bookings this week (SOREN_BOOKING_ENABLED is off) — this inbox routes to his calendar, not Katie\'s, so it needs manual scheduling until he turns it back on.',
+        reason: 'Soren is not accepting new bookings this week (SOREN_BOOKING_ENABLED is off) and this lead had no existing hold on his calendar — this inbox routes to his calendar, not Katie\'s, so it needs manual scheduling until he turns it back on.',
         draft: result.draft,
         ccEmails: result.ccEmails,
         pendingBooking: result.pendingBooking,

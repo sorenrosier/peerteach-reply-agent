@@ -172,6 +172,35 @@ export async function createHold(params: {
   }
 }
 
+// Read-only check for whether a hold already exists for this lead+campaign — used to let
+// an already-in-flight conversation finish even when the calendar isn't accepting new
+// bookings, without maintaining a manual exception list. Fails CLOSED (returns false) on
+// error, the opposite of most hold operations in this file: this result gates whether an
+// auto-send is allowed, so an uncertain answer should fall back to the safer path
+// (escalate for human review), not the more permissive one.
+export async function hasExistingHold(leadEmail: string, campaignId: string, calendarEmail?: string): Promise<boolean> {
+  try {
+    const token = await getAccessToken(calendarEmail);
+    const res = await axios.get('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+      headers: { Authorization: `Bearer ${token}` },
+      params: {
+        privateExtendedProperty: [`peerteach_hold=true`, `lead_email=${leadEmail}`, `campaign_id=${campaignId}`],
+        timeMin: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+        maxResults: 5,
+      },
+      paramsSerializer: { indexes: null },
+      timeout: 10000,
+    });
+    return ((res.data.items ?? []) as Array<any>).length > 0;
+  } catch (err) {
+    console.warn(
+      '[googleCalendar] hasExistingHold check failed, defaulting to false:',
+      err instanceof Error ? err.message : String(err),
+    );
+    return false;
+  }
+}
+
 // Deletes all holds tagged with this lead+campaign — called whenever a new reply comes in
 // from that lead (their old holds are now stale, whatever they said) and after a real
 // Calendly booking is created (the tentative hold is no longer needed).
