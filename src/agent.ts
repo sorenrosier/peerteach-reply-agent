@@ -357,13 +357,13 @@ book_meeting:
 - You never need anyone's email to invite them. Everyone else on the thread is added to the invite as a guest automatically. If the prospect asked to include colleagues or said others will attend, just book — do not ask for emails.
 - After booking, draft a short confirmation. Do not include any URLs or links — the calendar invite includes those automatically.
 
-BOOKING HOST — get_available_times and book_meeting both return a "booking_host" / "host" field ('katie' or 'soren'). This tells you who is ACTUALLY hosting the call, which can differ from whose inbox you're replying from (Katie's inbox sometimes overflows onto Soren's calendar when hers is full — check this field, don't assume). Use it to pick the right confirmation template below. Only Katie-hosted bookings go through Calendly, which sends its own reminder email — Soren-hosted bookings do not have an equivalent reminder system, so never promise a reminder for those regardless of who you're sending as.
+BOOKING HOST — get_available_times and book_meeting both return a "booking_host" / "host" field ('katie' or 'soren'). This tells you who is ACTUALLY hosting the call, which can differ from whose inbox you're replying from (Katie's inbox sometimes overflows onto Soren's calendar — either because she had nothing available in the window, or because booking a previously-offered time would now overload her schedule with back-to-back meetings — check this field, don't assume). Use it to pick the right confirmation template below. Only Katie-hosted bookings go through Calendly, which sends its own reminder email — Soren-hosted bookings do not have an equivalent reminder system, so never promise a reminder for those regardless of who you're sending as.
 
 - When the booking came from the agent picking a time within the prospect's stated window: DO state the specific time you booked (they haven't said it yet — you picked it). Include that a calendar invite has been sent, and apply the reminder rule above.
 - When the prospect explicitly confirmed a specific time they named: DO NOT restate that time — they just said it and the calendar invite shows it. Confirm warmly without parroting the slot, mention the invite, and apply the reminder rule above.
   - host=katie, sending as KATIE, future day: "Perfect, that works on my end. I just sent over a calendar invite with the Zoom link, and I'll send a reminder the morning of. Looking forward to connecting!"
   - host=katie, sending as KATIE, same day (today): "Perfect, that works on my end. I just sent over a calendar invite with the Zoom link. Looking forward to connecting!"
-  - host=soren, sending as KATIE (overflow, her calendar was full this window): "Perfect, that works! I've got you set up with Soren, PeerTeach's founder and a researcher at Stanford's Graduate School of Education. He'll send over a calendar invite with the video link and will be joining you directly."
+  - host=soren, sending as KATIE (overflow — either she had nothing available, or this exact time would now overload her schedule): "Perfect, that works! I've got you set up with Soren, PeerTeach's founder and a researcher at Stanford's Graduate School of Education. He'll send over a calendar invite with the video link and will be joining you directly."
   - host=soren, sending as KREG: "Thanks for getting back to me, that works well. My co-founder Soren will send over a calendar invite with the video link and will be joining you directly."
   - host=soren, sending as SOREN (himself): "Thanks for getting back to me, that works well. I've sent over a calendar invite with the video link. Looking forward to connecting!"
   - host=katie should never occur when sending as KREG or SOREN — if it somehow does, treat it as unexpected and escalate rather than guessing which template applies.
@@ -893,6 +893,38 @@ async function executeToolWithRetry(
           } catch (err) {
             console.warn('[agent] book_meeting host re-derivation failed, defaulting to sender host:', err instanceof Error ? err.message : String(err));
           }
+        }
+      }
+
+      // Clustering re-check: even if `host` resolved to 'katie' above, the calendar may
+      // have filled in around this exact slot since it was originally offered — the
+      // consecutive-meetings check only ever runs once, at offer time (see
+      // get_available_times above), and is never re-validated at confirmation. Re-run it
+      // now against Katie's CURRENT calendar, and if this confirmation would create a
+      // 4th+ back-to-back meeting, hand it to Soren instead of walking back a time
+      // already promised to the prospect — same idea as the overflow case above, just
+      // triggered by density instead of zero availability. Never refuses the booking
+      // outright: if Soren isn't free at this exact time either, or isn't accepting
+      // bookings, this just books Katie as originally confirmed and accepts the cluster.
+      if (host === 'katie' && envOptional('GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON') && (isSorenBookingEnabled() || hadSorenHold)) {
+        try {
+          const checkEnd = new Date(new Date(input.start_time).getTime() + 35 * 60000).toISOString();
+          const bufferMs = 4 * 60 * 60 * 1000;
+          const rangeStart = new Date(new Date(input.start_time).getTime() - bufferMs).toISOString();
+          const rangeEnd = new Date(new Date(checkEnd).getTime() + bufferMs).toISOString();
+          const existingMeetings = await getBusyMeetings(rangeStart, rangeEnd);
+          const candidateEnd = new Date(new Date(input.start_time).getTime() + 30 * 60 * 1000).toISOString();
+          if (wouldExceedConsecutiveMeetings(existingMeetings, input.start_time, candidateEnd)) {
+            const reqMs = new Date(input.start_time).getTime();
+            const sorenSlots = await getSorenAvailableTimes(input.start_time, checkEnd);
+            const sorenFree = sorenSlots.some((s) => Math.abs(new Date(s.startTime).getTime() - reqMs) < 60 * 1000);
+            if (sorenFree) {
+              console.log(`[agent] book_meeting: Katie's calendar filled in around ${input.start_time} since it was offered (would be 4th+ back-to-back) — handing off to Soren instead`);
+              host = 'soren';
+            }
+          }
+        } catch (err) {
+          console.warn('[agent] book_meeting clustering re-check failed, keeping host=katie:', err instanceof Error ? err.message : String(err));
         }
       }
 
