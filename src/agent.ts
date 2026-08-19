@@ -781,13 +781,38 @@ async function executeToolWithRetry(
           picked = [exact];
           requestedAvailable = true;
         } else {
-          // Find 2 closest slots to the requested time
-          const sorted = [...slots].sort(
-            (a, b) =>
-              Math.abs(new Date(a.startTime).getTime() - reqMs) -
-              Math.abs(new Date(b.startTime).getTime() - reqMs),
-          );
-          picked = sorted.slice(0, 2);
+          // The exact requested time isn't open on Katie's calendar (someone else took
+          // it, or she manually blocked it) — but the range still has OTHER Katie slots,
+          // so the whole-range overflow above never triggered for this call. Before
+          // falling back to offering different times, check whether Soren is free at this
+          // EXACT requested time: landing there is a much better outcome than walking back
+          // a time that may already have been discussed with this prospect (this is
+          // exactly the gap that let a prospect confirm a time Katie had since blocked,
+          // and get offered two unrelated alternates instead of being routed to Soren, who
+          // was free at the exact time already on the table).
+          let sorenExact: { startTime: string } | undefined;
+          if (host === 'katie' && sorenEnabled) {
+            try {
+              const checkEnd = new Date(reqMs + 35 * 60000).toISOString();
+              const sorenCandidates = await getSorenAvailableTimes(requestedTime, checkEnd);
+              sorenExact = sorenCandidates.find((s) => Math.abs(new Date(s.startTime).getTime() - reqMs) < 60 * 1000);
+            } catch (err) {
+              console.warn('[agent] Soren exact-time overflow check failed:', err instanceof Error ? err.message : String(err));
+            }
+          }
+          if (sorenExact) {
+            host = 'soren';
+            picked = [sorenExact];
+            requestedAvailable = true;
+          } else {
+            // Find 2 closest slots to the requested time
+            const sorted = [...slots].sort(
+              (a, b) =>
+                Math.abs(new Date(a.startTime).getTime() - reqMs) -
+                Math.abs(new Date(b.startTime).getTime() - reqMs),
+            );
+            picked = sorted.slice(0, 2);
+          }
         }
       } else {
         picked = pickTwoSlots(slots);
