@@ -1,8 +1,8 @@
-import { runAgent, AgentResult, computeGuestEmails, getBookingHost } from './agent';
+import { runAgent, AgentResult, computeGuestEmails, getBookingHost, BookingHost } from './agent';
 import { replyToEmail, fetchEmailThread } from './instantly';
 import { bookMeeting } from './calendly';
 import { bookSorenMeeting } from './sorenBooking';
-import { deleteHoldsForLead, hasExistingHold } from './googleCalendar';
+import { deleteHoldsForLead, hasExistingHold, getHoldsForLead } from './googleCalendar';
 import { envOptional, isAutoSendEnabled, isSorenBookingEnabled, SOREN_EMAIL } from './env';
 import {
   postAgentDraft,
@@ -89,8 +89,22 @@ export async function routeReply(payload: InstantlyWebhookPayload): Promise<void
   // off): no manual exception list to maintain, it just naturally covers whoever's
   // mid-negotiation and stops applying once their hold is used or expires.
   let hadSorenHold = false;
+  // The real ISO start times of any active holds for this lead, tagged by which calendar
+  // they're on — read before the cleanup below wipes them, so the agent can ground a
+  // "Tuesday works" style confirmation in the actual times it offered instead of having to
+  // recompute the date from memory of an earlier email (see getHoldsForLead in
+  // googleCalendar.ts for why this matters).
+  let previousOfferedTimes: Array<{ startTime: string; host: BookingHost }> = [];
   if (envOptional('GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON')) {
     hadSorenHold = await hasExistingHold(payload.lead_email, payload.campaign_id, SOREN_EMAIL);
+    const [katieHolds, sorenHolds] = await Promise.all([
+      getHoldsForLead(payload.lead_email, payload.campaign_id),
+      getHoldsForLead(payload.lead_email, payload.campaign_id, SOREN_EMAIL),
+    ]);
+    previousOfferedTimes = [
+      ...katieHolds.map((h) => ({ ...h, host: 'katie' as BookingHost })),
+      ...sorenHolds.map((h) => ({ ...h, host: 'soren' as BookingHost })),
+    ];
   }
 
   // A new reply means any calendar holds from prior offers to this lead are now stale —
@@ -112,7 +126,7 @@ export async function routeReply(payload: InstantlyWebhookPayload): Promise<void
 
   let result;
   try {
-    result = await runAgent(payload, thread, {}, hadSorenHold);
+    result = await runAgent(payload, thread, {}, hadSorenHold, previousOfferedTimes);
   } catch (err) {
     console.error('[router] agent threw:', err instanceof Error ? err.stack : String(err));
     try {

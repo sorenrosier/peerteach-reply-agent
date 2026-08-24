@@ -215,7 +215,35 @@ function getSchoolYearContext(now: Date): string {
   return 'It is spring, with the end of the school year approaching. A light "as the year winds down" can fit. Summer is a good time to plan ahead for fall.';
 }
 
-function buildSystemPrompt(payload: InstantlyWebhookPayload): string {
+// Renders any still-active holds (times we already offered this lead) as a grounded,
+// unambiguous list the model can match a bare-name confirmation ("Tuesday works") against,
+// instead of recomputing the date itself from memory of an earlier email — see
+// getHoldsForLead in googleCalendar.ts for the incident that motivated this. Weekday is
+// labeled in Eastern time for a stable, single reference frame; that's safe for any
+// realistic business-hours meeting time across the timezones this prompt supports (Pacific
+// through Eastern) since none of them cross the ET day boundary at those hours.
+function buildPreviousOfferedTimesBlock(previousOfferedTimes: Array<{ startTime: string; host: BookingHost }>): string {
+  if (previousOfferedTimes.length === 0) return '';
+  const weekdayFmt = new Intl.DateTimeFormat('en-US', {
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    timeZone: 'America/New_York',
+  });
+  const lines = previousOfferedTimes
+    .map((t) => `- ${weekdayFmt.format(new Date(t.startTime))} (iso_utc: ${t.startTime})`)
+    .join('\n');
+  return `
+PREVIOUSLY OFFERED TIMES (still on hold, not yet confirmed):
+${lines}
+If the prospect is confirming one of these by name only — e.g. "Tuesday works", "the Monday one" — WITHOUT restating the clock time, match their words to the weekday above and use that EXACT iso_utc value for book_meeting (or as requested_time if you want to re-verify first). Do NOT recompute the date yourself from memory of an earlier email in this thread — this list is the verified source of truth. If nothing here clearly matches what they said, fall back to reading the thread as usual.
+`;
+}
+
+function buildSystemPrompt(
+  payload: InstantlyWebhookPayload,
+  previousOfferedTimes: Array<{ startTime: string; host: BookingHost }> = [],
+): string {
   const { firstName: senderFirst, signOff } = getSenderIdentity(payload.email_account);
   const isKreg = senderFirst === 'Kreg';
   const isSoren = senderFirst === 'Soren';
@@ -262,7 +290,7 @@ PRICING / "IS IT FREE?" HANDLING:
 
 CURRENT DATE/TIME: ${dateTimeStr}
 TODAY (ISO): ${todayIso}
-
+${buildPreviousOfferedTimesBlock(previousOfferedTimes)}
 SCHOOL YEAR CONTEXT:
 ${getSchoolYearContext(now)}
 - You know today's date (above) and the part of the school year it is. When it fits naturally, a brief, genuine seasonal touch is good ("hope you're enjoying the summer," "as you close out the year"). Keep it to a short phrase, never forced, and never more than once per email. If it does not fit the message, leave it out.
@@ -338,6 +366,10 @@ WHEN THE PROSPECT NAMES A DAY BUT NO SPECIFIC WINDOW (e.g. "I'm free Tuesday", "
 - Call get_available_times for that full day and offer 2 specific times from the calendar.
 - If only 1 slot is available that day, offer it and ask if it works: "I have [time] available — does that work for you?"
 - Do NOT book yet — wait for them to confirm one of the options.
+
+WHEN THE PROSPECT CONFIRMS A PREVIOUSLY OFFERED TIME BY NAME ONLY (e.g. "Tuesday works!", "the Monday one works", no clock time repeated):
+- This is a separate reply from the one that offered the times — check the PREVIOUSLY OFFERED TIMES list above (near the top of this prompt) and use its exact iso_utc value for book_meeting. Do not work out the date yourself from memory of your earlier email in the thread.
+- If that list is empty or nothing in it clearly matches what they said (e.g. the holds already expired), fall back to reading the thread history for the times you offered, but treat this as a lower-confidence path — if you're not fully sure which exact time they mean, verify with get_available_times using requested_time before calling book_meeting, or escalate rather than guess.
 
 WHEN THE PROSPECT PROPOSES SPECIFIC TIMES:
 - Pass each as requested_time in ISO UTC format to verify availability. Pick the best available slot yourself — do NOT ask them which they prefer. Just confirm the chosen time directly.
@@ -1037,6 +1069,10 @@ export async function runAgent(
   // processing — computed once by the caller (router.ts) before it clears stale holds, and
   // threaded through so the toggle-off exception for already-in-flight conversations works.
   hadSorenHold = false,
+  // Real ISO start times of this lead's still-active holds (their prior offers), read by
+  // router.ts before it clears stale holds — lets the model ground a bare-name confirmation
+  // ("Tuesday works") in the exact time it actually offered instead of recomputing it.
+  previousOfferedTimes: Array<{ startTime: string; host: BookingHost }> = [],
 ): Promise<AgentResult> {
   const client = new Anthropic({ apiKey: env('ANTHROPIC_API_KEY') });
 
@@ -1058,6 +1094,10 @@ export async function runAgent(
   // Tracks which calendar (Katie's or Soren's) each offered slot belongs to, populated by
   // get_available_times and read by book_meeting later in the same run.
   const slotHosts = new Map<string, BookingHost>();
+  // Seed with real hold data so book_meeting's existing exact/tolerance-match lookup works
+  // even if the model uses the exact iso_utc value straight from the prompt block below
+  // rather than calling get_available_times again first.
+  for (const t of previousOfferedTimes) slotHosts.set(t.startTime, t.host);
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
     console.log(`[agent] iteration ${i + 1}/${MAX_ITERATIONS}`);
@@ -1065,7 +1105,7 @@ export async function runAgent(
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: 2048,
-      system: buildSystemPrompt(payload),
+      system: buildSystemPrompt(payload, previousOfferedTimes),
       tools: TOOLS,
       messages,
     });

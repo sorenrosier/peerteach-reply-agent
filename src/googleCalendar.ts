@@ -201,6 +201,40 @@ export async function hasExistingHold(leadEmail: string, campaignId: string, cal
   }
 }
 
+// Reads the real start times of any active holds for this lead+campaign — used to ground
+// the agent in what it actually offered before router.ts's unconditional cleanup below
+// wipes them. Without this, a prospect confirming a previously-offered time by name only
+// ("Tuesday works") forces the model to recompute the exact date from memory of its own
+// prior email in a fresh run with no shared state — which is what let a real booking land
+// on the wrong day once. Fails open (returns []) since this only enriches context; losing
+// it should degrade to prior behavior, not block the reply.
+export async function getHoldsForLead(leadEmail: string, campaignId: string, calendarEmail?: string): Promise<Array<{ startTime: string }>> {
+  try {
+    const token = await getAccessToken(calendarEmail);
+    const res = await axios.get('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+      headers: { Authorization: `Bearer ${token}` },
+      params: {
+        privateExtendedProperty: [`peerteach_hold=true`, `lead_email=${leadEmail}`, `campaign_id=${campaignId}`],
+        timeMin: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+        maxResults: 10,
+      },
+      paramsSerializer: { indexes: null },
+      timeout: 10000,
+    });
+    const items = (res.data.items ?? []) as Array<any>;
+    return items
+      .map((item) => item.start?.dateTime as string | undefined)
+      .filter((s): s is string => !!s)
+      .map((startTime) => ({ startTime }));
+  } catch (err) {
+    console.warn(
+      '[googleCalendar] getHoldsForLead failed, continuing without prior-offer context:',
+      err instanceof Error ? err.message : String(err),
+    );
+    return [];
+  }
+}
+
 // Deletes all holds tagged with this lead+campaign — called whenever a new reply comes in
 // from that lead (their old holds are now stale, whatever they said) and after a real
 // Calendly booking is created (the tentative hold is no longer needed).
