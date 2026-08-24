@@ -1135,6 +1135,25 @@ export async function runAgent(
       const hiIndex = cleaned.search(/^Hi\s+\w/m);
       if (hiIndex > 0) cleaned = cleaned.slice(hiIndex).trim();
 
+      // Safety net: VOICE RULES require every real reply to start with "Hi [name],". If the
+      // model's final text still doesn't (the strip above only handles leaked reasoning
+      // BEFORE a real reply, not a response that is reasoning start-to-finish with no reply
+      // at all), this isn't a usable customer-facing draft — a real incident sent raw
+      // internal reasoning ("Kirstin has moved on... so I should thank her...") verbatim to
+      // a prospect because nothing checked the shape of the text before auto-sending it.
+      // Escalate instead of shipping something unverified — no suggested_reply, since the
+      // malformed text isn't a starting point worth reusing; a human writes it fresh.
+      if (!/^Hi\b/.test(cleaned)) {
+        console.warn('[agent] end_turn text missing the required "Hi [name]," opening — likely leaked reasoning, not a real reply. Escalating instead of drafting:', cleaned.slice(0, 300));
+        return {
+          action: 'escalate',
+          reason: `Agent output didn't look like a real reply (missing the standard "Hi [name]," opening) — likely leaked internal reasoning instead of drafting one. Raw output: "${cleaned.slice(0, 400)}"`,
+          booked: !!pendingBooking,
+          pendingBooking,
+          ccEmails: guestEmails,
+        };
+      }
+
       return {
         action: 'draft',
         draft: cleaned,
