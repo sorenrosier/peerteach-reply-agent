@@ -104,4 +104,9 @@ export interface SendReplyButtonValue {
     guests: string[];
     host: 'katie' | 'soren';
   };
+  // Present only for demo-reminder cards — the calendar event this reminder is for, so the
+  // Send/Skip handlers can mark it (reminder_status extended property) and never re-send or
+  // re-post the same reminder on a later cron tick.
+  calendar_event_id?: string;
+  calendar_host?: 'katie' | 'soren';
 }

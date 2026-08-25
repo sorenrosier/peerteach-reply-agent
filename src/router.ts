@@ -35,6 +35,12 @@ async function autoSendDraft(payload: InstantlyWebhookPayload, result: AgentResu
           name: result.pendingBooking.name,
           email: result.pendingBooking.email,
           guests: result.pendingBooking.guests,
+          timezone: result.pendingBooking.timezone,
+          leadEmail: payload.lead_email,
+          campaignId: payload.campaign_id,
+          eaccount: payload.email_account,
+          emailId: payload.email_id,
+          subject: replySubject(payload.reply_subject || payload.email_subject || ''),
         });
       } else {
         await bookMeeting({

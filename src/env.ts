@@ -27,6 +27,7 @@ const OPTIONAL_VARS = [
   'CRON_SECRET',
   'AUTO_SEND_ENABLED',
   'SOREN_BOOKING_ENABLED',
+  'REMINDER_AUTO_SEND_ENABLED',
 ] as const;
 
 // Soren's own calendar is booked directly via Google Calendar (no separate Calendly
@@ -101,4 +102,11 @@ export function isAutoSendEnabled(): boolean {
 // meetings — defaults to off, and stays off until he explicitly turns it back on.
 export function isSorenBookingEnabled(): boolean {
   return process.env.SOREN_BOOKING_ENABLED === 'true';
+}
+
+// Demo-call reminder emails (Soren's calendar only — see reminders.ts) default to posting
+// in Slack for approval rather than auto-sending, so the first batch of real reminders can
+// be checked by a human before trusting the pipeline. Flip to 'true' once validated.
+export function isReminderAutoSendEnabled(): boolean {
+  return process.env.REMINDER_AUTO_SEND_ENABLED === 'true';
 }

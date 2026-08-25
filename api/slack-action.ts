@@ -5,7 +5,7 @@ import { env, envOptional, validateEnv, SOREN_EMAIL } from '../src/env';
 import { replyToEmail } from '../src/instantly';
 import { bookMeeting } from '../src/calendly';
 import { bookSorenMeeting } from '../src/sorenBooking';
-import { deleteHoldsForLead } from '../src/googleCalendar';
+import { deleteHoldsForLead, updateEventReminderStatus } from '../src/googleCalendar';
 import { updateViaResponseUrl } from '../src/slack';
 import { SendReplyButtonValue, SlackActionPayload } from '../src/types';
 
@@ -182,6 +182,12 @@ async function processAction(
               name: parsed.booking.name,
               email: parsed.booking.email,
               guests: parsed.booking.guests,
+              timezone: parsed.booking.timezone,
+              leadEmail: parsed.lead_email,
+              campaignId: parsed.campaign_id,
+              eaccount: parsed.eaccount,
+              emailId: parsed.email_id,
+              subject: parsed.subject,
             });
           } else {
             await bookMeeting({
@@ -210,6 +216,13 @@ async function processAction(
           body: { text: parsed.body_text },
           cc: parsed.cc,
         });
+        if (parsed.calendar_event_id) {
+          await updateEventReminderStatus(
+            parsed.calendar_event_id,
+            'sent',
+            parsed.calendar_host === 'soren' ? SOREN_EMAIL : undefined,
+          );
+        }
         const userTag = payload.user?.id ? `<@${payload.user.id}>` : 'a teammate';
         await updateViaResponseUrl(
           payload.response_url,
@@ -260,9 +273,21 @@ async function processAction(
 
     case 'skip': {
       try {
-        const skipParsed = JSON.parse(action.value) as { lead_email?: string; campaign_id?: string };
+        const skipParsed = JSON.parse(action.value) as {
+          lead_email?: string;
+          campaign_id?: string;
+          calendar_event_id?: string;
+          calendar_host?: 'katie' | 'soren';
+        };
         if (skipParsed.lead_email && skipParsed.campaign_id) {
           await releaseHolds(skipParsed.lead_email, skipParsed.campaign_id);
+        }
+        if (skipParsed.calendar_event_id) {
+          await updateEventReminderStatus(
+            skipParsed.calendar_event_id,
+            'skipped',
+            skipParsed.calendar_host === 'soren' ? SOREN_EMAIL : undefined,
+          );
         }
       } catch {}
       const userTag = payload.user?.id ? `<@${payload.user.id}>` : 'a teammate';

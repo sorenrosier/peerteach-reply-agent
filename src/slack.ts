@@ -544,6 +544,89 @@ export async function postAutoSentNotification(
   await postMessage(blocks, `${header} to ${payload.lead_email}`);
 }
 
+// Posts a demo-call reminder for approval before it sends — reuses the existing
+// send_reply/skip buttons (via the calendar_event_id/calendar_host fields on
+// SendReplyButtonValue) rather than a parallel approval flow, so slack-action.ts's
+// handlers work unchanged.
+export async function postReminderApproval(params: {
+  name: string;
+  leadEmail: string;
+  campaignId: string;
+  eaccount: string;
+  emailId: string;
+  subject: string;
+  startTimeIso: string;
+  timezone: string;
+  draftText: string;
+  eventId: string;
+  otherGuests: string[];
+}): Promise<void> {
+  const buttonValue: SendReplyButtonValue = {
+    email_id: params.emailId,
+    eaccount: params.eaccount,
+    subject: params.subject,
+    body_text: params.draftText,
+    lead_email: params.leadEmail,
+    campaign_id: params.campaignId,
+    ...(params.otherGuests.length ? { cc: params.otherGuests } : {}),
+    calendar_event_id: params.eventId,
+    calendar_host: 'soren',
+  };
+  const valueStr = JSON.stringify(buttonValue);
+  let finalValue = valueStr;
+  if (valueStr.length > 1900) {
+    const overhead = valueStr.length - buttonValue.body_text.length;
+    const room = 1900 - overhead - 20;
+    finalValue = JSON.stringify({ ...buttonValue, body_text: buttonValue.body_text.slice(0, Math.max(0, room)) });
+  }
+  const skipValue = JSON.stringify({
+    lead_email: params.leadEmail,
+    campaign_id: params.campaignId,
+    calendar_event_id: params.eventId,
+    calendar_host: 'soren',
+  });
+
+  const blocks: any[] = [
+    { type: 'header', text: { type: 'plain_text', text: ':alarm_clock: Demo reminder — needs approval', emoji: true } },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: `*${params.name}* — <mailto:${params.leadEmail}|${params.leadEmail}>\nCall at *${formatBookingTime(params.startTimeIso, params.timezone)}*`,
+      },
+    },
+    {
+      type: 'section',
+      text: { type: 'mrkdwn', text: `*Reminder draft:*\n${quoteBlock(params.draftText, 2000)}` },
+    },
+    ...(params.otherGuests.length ? [{
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: `:link: *Will cc:* ${params.otherGuests.join(', ')}` }],
+    }] : []),
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          style: 'primary',
+          text: { type: 'plain_text', text: ':white_check_mark: Send Reminder', emoji: true },
+          action_id: 'send_reply',
+          value: finalValue,
+        },
+        {
+          type: 'button',
+          style: 'danger',
+          text: { type: 'plain_text', text: ':x: Skip', emoji: true },
+          action_id: 'skip',
+          value: skipValue,
+        },
+      ],
+    },
+  ];
+
+  await postMessage(blocks, `Demo reminder for ${params.leadEmail} at ${formatBookingTime(params.startTimeIso, params.timezone)}`);
+}
+
 // Update an existing message via response_url (used by slack-action handler).
 export async function updateViaResponseUrl(
   responseUrl: string,

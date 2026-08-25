@@ -67,6 +67,14 @@ export async function bookSorenMeeting(params: {
   name: string;
   email: string;
   guests?: string[];
+  // Only needed to support the demo-reminder cron (reminders.ts) — if omitted, the booking
+  // still succeeds, it just won't be tagged for a reminder later.
+  timezone?: string;
+  leadEmail?: string;
+  campaignId?: string;
+  eaccount?: string;
+  emailId?: string;
+  subject?: string;
 }): Promise<SorenBookingResult> {
   const endTime = new Date(new Date(params.startTime).getTime() + SLOT_MINUTES * 60000).toISOString();
 
@@ -99,6 +107,21 @@ export async function bookSorenMeeting(params: {
       // His own personal Zoom room, not an auto-generated Google Meet link.
       location: SOREN_ZOOM_URL,
       description: `Join Zoom: ${SOREN_ZOOM_URL}`,
+      // Tags this as a real booking (not a hold) so the reminders cron can find it, and
+      // carries what a later, decoupled reminder send needs to reconstruct the reply —
+      // this cron run has no other way to know the lead's timezone or which Instantly
+      // thread/inbox to reply through. Only set when the caller provided them.
+      extendedProperties: {
+        private: {
+          peerteach_booking: 'true',
+          ...(params.leadEmail ? { lead_email: params.leadEmail } : {}),
+          ...(params.campaignId ? { campaign_id: params.campaignId } : {}),
+          ...(params.eaccount ? { eaccount: params.eaccount } : {}),
+          ...(params.emailId ? { email_id: params.emailId } : {}),
+          ...(params.timezone ? { timezone: params.timezone } : {}),
+          ...(params.subject ? { subject: params.subject } : {}),
+        },
+      },
     },
     {
       headers: { Authorization: `Bearer ${token}` },

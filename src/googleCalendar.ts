@@ -347,3 +347,102 @@ export function wouldExceedConsecutiveMeetings(
 
   return chainLength > MAX_CONSECUTIVE;
 }
+
+export interface BookingNeedingReminder {
+  eventId: string;
+  startTime: string;
+  name: string;
+  leadEmail: string;
+  campaignId: string;
+  eaccount: string;
+  emailId: string;
+  timezone: string;
+  subject: string;
+  // Other real attendees besides the primary lead (e.g. looped-in colleagues) — the
+  // organizer (Soren) is never included here.
+  otherGuests: string[];
+}
+
+// Finds real, confirmed bookings (tagged peerteach_booking=true by bookSorenMeeting) whose
+// start time falls in the given window and that haven't had a reminder queued or sent yet
+// (no reminder_status extended property at all). Used by the reminders cron to find calls
+// starting in ~3 hours. Fails open (returns []) — a lookup failure should just mean this
+// tick sends nothing, not that the cron crashes.
+export async function listBookingsNeedingReminder(
+  windowStartIso: string,
+  windowEndIso: string,
+  calendarEmail?: string,
+): Promise<BookingNeedingReminder[]> {
+  try {
+    const token = await getAccessToken(calendarEmail);
+    const res = await axios.get('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+      headers: { Authorization: `Bearer ${token}` },
+      params: {
+        privateExtendedProperty: ['peerteach_booking=true'],
+        timeMin: windowStartIso,
+        timeMax: windowEndIso,
+        singleEvents: true,
+        maxResults: 50,
+      },
+      paramsSerializer: { indexes: null },
+      timeout: 10000,
+    });
+    const items = (res.data.items ?? []) as Array<any>;
+    const results: BookingNeedingReminder[] = [];
+    for (const item of items) {
+      const priv = item.extendedProperties?.private ?? {};
+      if (priv.reminder_status) continue; // already queued, sent, or skipped
+      if (!item.start?.dateTime || !priv.lead_email || !priv.campaign_id || !priv.eaccount || !priv.email_id || !priv.timezone || !priv.subject) {
+        continue; // booked before this metadata existed, or malformed — skip rather than guess
+      }
+      const organizerLower = (calendarEmail ?? '').toLowerCase();
+      const otherGuests = ((item.attendees ?? []) as Array<any>)
+        .map((a) => (a?.email ?? '').toLowerCase().trim())
+        .filter((e) => e && e !== priv.lead_email.toLowerCase() && e !== organizerLower);
+      results.push({
+        eventId: item.id,
+        startTime: item.start.dateTime,
+        name: item.summary?.split(' <> ')[0] ?? priv.lead_email,
+        leadEmail: priv.lead_email,
+        campaignId: priv.campaign_id,
+        eaccount: priv.eaccount,
+        emailId: priv.email_id,
+        timezone: priv.timezone,
+        subject: priv.subject,
+        otherGuests,
+      });
+    }
+    return results;
+  } catch (err) {
+    console.warn(
+      '[googleCalendar] listBookingsNeedingReminder failed:',
+      err instanceof Error ? err.message : String(err),
+    );
+    return [];
+  }
+}
+
+// Marks a booking's reminder as queued (posted in Slack, awaiting approval), sent, or
+// skipped — a Calendar PATCH merges extendedProperties.private rather than replacing it, so
+// this only touches the one key. Best-effort: a failure here shouldn't block the reminder
+// itself, just risks a duplicate on the next tick, which is a much smaller problem than
+// silently failing to notify.
+export async function updateEventReminderStatus(
+  eventId: string,
+  status: 'queued' | 'sent' | 'skipped',
+  calendarEmail?: string,
+): Promise<void> {
+  try {
+    const token = await getAccessToken(calendarEmail);
+    await axios.patch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`,
+      { extendedProperties: { private: { reminder_status: status } } },
+      { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 },
+    );
+  } catch (err) {
+    console.warn(
+      `[googleCalendar] updateEventReminderStatus(${eventId}, ${status}) failed:`,
+      err instanceof Error ? err.message : String(err),
+    );
+  }
+}
