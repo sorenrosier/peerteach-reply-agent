@@ -253,6 +253,20 @@ export async function deleteHoldsForLead(leadEmail: string, campaignId: string, 
     });
     const items = (res.data.items ?? []) as Array<any>;
     for (const item of items) {
+      // A genuine tentative hold NEVER has attendees — createHold sets none. If one now
+      // does, a human has since turned it into a real, confirmed meeting by editing it
+      // directly (title, guests) rather than letting the system replace it, and this
+      // cleanup must never delete that just because it still carries the internal hold
+      // tag. This is exactly what happened to a real confirmed meeting once: an unrelated
+      // "Thank You" reply from someone else on the thread triggered this cleanup, which
+      // hard-deleted it (and, since it was one shared event, removed it for every real
+      // attendee at once) purely because the tag was never cleared.
+      if (Array.isArray(item.attendees) && item.attendees.length > 0) {
+        console.warn(
+          `[googleCalendar] deleteHoldsForLead: skipping ${item.id} ("${item.summary}") — it has real attendees (${item.attendees.map((a: any) => a.email).join(', ')}), so it's no longer just a tentative hold`,
+        );
+        continue;
+      }
       await axios.delete(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${item.id}`, {
         headers: { Authorization: `Bearer ${token}` },
         timeout: 10000,
@@ -295,6 +309,16 @@ export async function deleteExpiredHolds(calendarEmail?: string): Promise<{ chec
 
   let deleted = 0;
   for (const item of items) {
+    // Same guard as deleteHoldsForLead: never delete a "hold" that now has real attendees
+    // — createHold sets none, so their presence means a human has since turned it into an
+    // actual confirmed meeting by editing it directly, and the internal tag was just never
+    // cleared. See deleteHoldsForLead for the real incident this protects against.
+    if (Array.isArray(item.attendees) && item.attendees.length > 0) {
+      console.warn(
+        `[googleCalendar] deleteExpiredHolds: skipping ${item.id} ("${item.summary}") — it has real attendees, so it's no longer just a tentative hold`,
+      );
+      continue;
+    }
     const createdAt = item.extendedProperties?.private?.created_at;
     const createdMs = createdAt ? new Date(createdAt).getTime() : new Date(item.created).getTime();
     if (createdMs < cutoff) {
