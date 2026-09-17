@@ -174,6 +174,57 @@ export async function updateLeadVariables(
   });
 }
 
+// Guards against processing the same inbound email twice — Instantly's webhook delivery
+// isn't guaranteed exactly-once (a slow response, e.g. from a cold Vercel start before our
+// handler even begins running, can make it treat a delivery as failed and retry), and
+// nothing previously tracked which email_ids had already been handled. A real incident:
+// the same reply got processed by two separate runs about 3 minutes apart, each of which
+// independently booked a meeting — one silently (its own confirmation email failed), the
+// other confirmed and visible, leaving two real, conflicting calendar invites for the same
+// lead that a human had to notice and clean up by hand.
+//
+// Storage is a single lead custom_variable holding the most recently processed email_id —
+// no separate store needed (there's no database in this project), self-limiting (one field,
+// always overwritten, nothing to expire or clean up), and reuses infrastructure this
+// pipeline already depends on. Returns true if this exact email_id was already processed
+// (caller should skip it entirely) — false if it's new (and now marked, so a near-duplicate
+// arriving moments later will see the mark). Fails OPEN on any read/write error: an
+// idempotency check that can't confirm anything should never be the reason a real reply
+// goes unanswered.
+export async function checkAndMarkEmailProcessed(
+  campaign_id: string,
+  lead_email: string,
+  email_id: string,
+): Promise<boolean> {
+  try {
+    const id = await findLeadIdByEmail(campaign_id, lead_email);
+    if (!id) return false;
+    // Sent as `custom_variables` on write, but the API merges those directly into the
+    // lead's `payload` object (the same bag firstName/lastName/state live in) rather than
+    // returning a separate `custom_variables` field — confirmed empirically, not documented.
+    const lead = await instantlyRequest<{ payload?: Record<string, string> }>({
+      method: 'GET',
+      url: `/leads/${id}`,
+    });
+    const existing = lead.payload ?? {};
+    if (existing.last_processed_email_id === email_id) {
+      return true;
+    }
+    await instantlyRequest({
+      method: 'PATCH',
+      url: `/leads/${id}`,
+      data: { custom_variables: { last_processed_email_id: email_id } },
+    });
+    return false;
+  } catch (err) {
+    console.warn(
+      '[instantly] checkAndMarkEmailProcessed failed, proceeding as if new:',
+      err instanceof Error ? err.message : String(err),
+    );
+    return false;
+  }
+}
+
 export interface ThreadEmail {
   body: string;
   timestamp: string;

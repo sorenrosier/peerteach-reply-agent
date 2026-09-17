@@ -1,5 +1,5 @@
 import { runAgent, AgentResult, computeGuestEmails, getBookingHost, BookingHost } from './agent';
-import { replyToEmail, fetchEmailThread } from './instantly';
+import { replyToEmail, fetchEmailThread, checkAndMarkEmailProcessed } from './instantly';
 import { bookMeeting } from './calendly';
 import { bookSorenMeeting } from './sorenBooking';
 import { deleteHoldsForLead, hasExistingHold, getHoldsForLead } from './googleCalendar';
@@ -90,6 +90,19 @@ async function autoSendDraft(payload: InstantlyWebhookPayload, result: AgentResu
 
 export async function routeReply(payload: InstantlyWebhookPayload): Promise<void> {
   console.log(`[router] lead=${payload.lead_email} campaign=${payload.campaign_id}`);
+
+  // Instantly's webhook delivery isn't guaranteed exactly-once (a slow response — even a
+  // cold Vercel start before this handler starts running, well before any of our own
+  // processing — can make it treat a delivery as failed and retry). Checked and marked
+  // FIRST, before anything else, so a near-duplicate delivery arriving moments later sees
+  // the mark even if this run hasn't finished yet. A real incident: the same reply got
+  // processed twice about 3 minutes apart, each run independently booking a meeting for
+  // the same lead — one silently (its own confirmation email failed), leaving two real,
+  // conflicting invites that a human had to notice and clean up by hand.
+  if (await checkAndMarkEmailProcessed(payload.campaign_id, payload.lead_email, payload.email_id)) {
+    console.log(`[router] duplicate delivery for email_id=${payload.email_id} — already processed, skipping`);
+    return;
+  }
 
   // Whether this lead already has an active hold on Soren's calendar — checked BEFORE the
   // stale-hold cleanup below wipes it out. This is what lets an already-in-flight
