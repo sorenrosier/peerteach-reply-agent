@@ -368,9 +368,14 @@ WHEN THE PROSPECT NAMES A DAY WITH A TIME WINDOW (e.g. "after 1pm Tuesday", "Thu
 - In your reply, confirm the specific time you just booked, state that you've sent a calendar invite with the Zoom link, and — ONLY if the meeting is on a future day, not today (see "reminder mention" rule under book_meeting) — mention you'll send a reminder on the day of the call.
 
 WHEN THE PROSPECT NAMES A DAY BUT NO SPECIFIC WINDOW (e.g. "I'm free Tuesday", "does Thursday work?", "anytime this Friday"):
-- Call get_available_times for that full day and offer 2 specific times from the calendar.
-- If only 1 slot is available that day, offer it and ask if it works: "I have [time] available — does that work for you?"
-- Do NOT book yet — wait for them to confirm one of the options.
+- Call get_available_times for that full day and offer the time(s) it returns — for booking_host 'katie' that's a single time now (see CALENDLY SELF-SERVICE FALLBACK below for how to phrase it); for booking_host 'soren' it's still 2, unchanged.
+- Do NOT book yet — wait for them to confirm.
+
+CALENDLY SELF-SERVICE FALLBACK (booking_host 'katie' only):
+- Katie-hosted offers now propose a single time, not two — get_available_times already returns just one for her. Immediately after it, add one line offering her Calendly page as a fallback in case that time doesn't work, using this EXACT markdown syntax so it renders as a real link (do not write the raw URL out in prose, and do not alter it): [my Calendly](https://calendly.com/katie-peerteach/new-meeting)
+  Example: "I have this Thursday at 2:00 PM CDT open — does that work? If not, feel free to just grab whatever time's easiest for you on [my Calendly](https://calendly.com/katie-peerteach/new-meeting)."
+- Say "my Calendly" only when sending as Katie herself. If booking_host is 'katie' but you're sending as someone else, say "Katie's Calendly" instead — it's specifically her page.
+- This is Katie-only. Soren-hosted offers (booking_host 'soren') are completely unchanged by this — still 2 times, no link, since he has no public self-service page.
 
 WHEN THE PROSPECT CONFIRMS A PREVIOUSLY OFFERED TIME BY NAME ONLY (e.g. "Tuesday works!", "the Monday one works", no clock time repeated):
 - This is a separate reply from the one that offered the times — check the PREVIOUSLY OFFERED TIMES list above (near the top of this prompt) and use its exact iso_utc value for book_meeting. Do not work out the date yourself from memory of your earlier email in the thread.
@@ -384,9 +389,15 @@ WHEN THE PROSPECT PROPOSES SPECIFIC TIMES:
 - If NONE of their proposed times are available, briefly say so and offer 2 alternatives from your calendar.
 
 WHEN NO PREFERENCE GIVEN:
-- Propose 2 times and end with: "Happy to find another time if those don't work." or similar flexibility offer.
+- booking_host 'katie': propose the single time returned, with the Calendly fallback line (see CALENDLY SELF-SERVICE FALLBACK above) instead of a second time.
+- booking_host 'soren': propose 2 times and end with: "Happy to find another time if those don't work." or similar flexibility offer — unchanged.
 
-NEVER propose more than 2 times in a single reply. Every proposed time gets a tentative hold on the relevant calendar until it's confirmed or declined — more than 2 proposed times means more holds sitting there for no reason. When both proposed times land on the same day, prefer ones a few hours apart if the calendar allows it — but if the only slots available in the window they asked about are close together (e.g. they said "tomorrow afternoon" and only 1pm and 2:30pm are open), offer those two rather than reaching outside the window they asked about.
+For booking_host 'soren', never propose more than 2 times in a single reply — every proposed time gets a tentative hold on his calendar until it's confirmed or declined, and more than 2 means more holds sitting there for no reason. When both land on the same day, prefer ones a few hours apart if the calendar allows it — but if the only slots available in the window they asked about are close together, offer those two rather than reaching outside the window they asked about. For booking_host 'katie', this is moot — you're only ever proposing the one time plus the Calendly fallback.
+
+Hard end-time constraint stated alongside a confirmation, booking_host 'katie' only (e.g. "Let's do 2:00, but I'd need to be free by 2:15"):
+- Every call is a full 30 minutes — there's no shorter version. If the time they just confirmed would run past a deadline they gave in that same message, do NOT book it as stated, and don't try to work out a better time yourself either.
+- Instead, send ONE email explaining the conflict and pointing them to Katie's Calendly to pick whatever actually works for them: "Since our calls run a full 30 minutes, 2:00 wouldn't quite leave the full time before you need to be out at 2:15 — would you mind grabbing whatever time's easiest for you on [my Calendly](https://calendly.com/katie-peerteach/new-meeting)?" (or "Katie's Calendly" per the sender-identity rule above). Do not call get_available_times or book_meeting for this — you're not proposing or booking a time yourself here.
+- This is booking_host 'katie' only. This situation doesn't have special handling for booking_host 'soren' — proceed normally.
 
 book_meeting:
 - Only call when prospect EXPLICITLY confirmed a specific time ("Yes, Thursday 2pm works", "That's perfect")
@@ -853,15 +864,24 @@ async function executeToolWithRetry(
             picked = [sorenExact];
             requestedAvailable = true;
           } else {
-            // Find 2 closest slots to the requested time
+            // Find the closest slot(s) to the requested time. Katie-hosted offers a single
+            // alternative now (see the no-requested_time branch below for why); Soren's
+            // overflow path is unchanged.
             const sorted = [...slots].sort(
               (a, b) =>
                 Math.abs(new Date(a.startTime).getTime() - reqMs) -
                 Math.abs(new Date(b.startTime).getTime() - reqMs),
             );
-            picked = sorted.slice(0, 2);
+            picked = sorted.slice(0, host === 'katie' ? 1 : 2);
           }
         }
+      } else if (host === 'katie') {
+        // Offering only one time (instead of the previous two) keeps a single tentative
+        // hold on Katie's calendar per offer instead of two, which was leaving far more
+        // holds sitting around than ever got used. The prompt pairs this with a Calendly
+        // self-service link so the prospect still has an easy path if this one time
+        // doesn't work, without the agent needing to hold a second slot on spec.
+        picked = slots.length > 0 ? [slots[0]] : [];
       } else {
         picked = pickTwoSlots(slots);
       }
@@ -908,6 +928,10 @@ async function executeToolWithRetry(
       if (host === 'soren' && senderHost === 'katie') {
         instruction +=
           ' IMPORTANT: these are Soren\'s times (Katie\'s calendar had nothing this window) — Soren is PeerTeach\'s founder and a researcher at Stanford\'s Graduate School of Education. Mention that warmly when offering these, framed as a nice option, not an apology.';
+      }
+      if (host === 'katie' && !requestedAvailable && suggested.length === 1) {
+        instruction +=
+          ` IMPORTANT: you're offering a single time now (not two) — after it, add the Calendly self-service fallback line exactly as described in the CALENDLY SELF-SERVICE FALLBACK section of your instructions, using the markdown link format given there.`;
       }
       return {
         data: {

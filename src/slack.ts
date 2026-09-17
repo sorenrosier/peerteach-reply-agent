@@ -1,6 +1,7 @@
 import { WebClient } from '@slack/web-api';
 import axios from 'axios';
 import { env, envOptional } from './env';
+import { renderLinks } from './linkFormat';
 import {
   AgentResult,
   ClassificationResult,
@@ -263,7 +264,7 @@ export async function postEscalateNotification(
 
     blocks.push({
       type: 'section',
-      text: { type: 'mrkdwn', text: `*Suggested reply (needs human review before sending):*\n${quoteBlock(suggestedReply, 2500)}` },
+      text: { type: 'mrkdwn', text: `*Suggested reply (needs human review before sending):*\n${quoteBlock(renderLinks(suggestedReply).slackMrkdwn, 2500)}` },
     });
 
     if (pendingBooking) {
@@ -463,7 +464,7 @@ export async function postAgentDraft(
     { type: 'section', text: { type: 'mrkdwn', text: prospectSummary(payload) } },
     {
       type: 'section',
-      text: { type: 'mrkdwn', text: `*Draft reply (from ${payload.email_account}):*\n${quoteBlock(draft, 2500)}` },
+      text: { type: 'mrkdwn', text: `*Draft reply (from ${payload.email_account}):*\n${quoteBlock(renderLinks(draft).slackMrkdwn, 2500)}` },
     },
     ...(result.booked && result.pendingBooking ? [{
       type: 'context',
@@ -524,7 +525,7 @@ export async function postAutoSentNotification(
     { type: 'section', text: { type: 'mrkdwn', text: prospectSummary(payload) } },
     {
       type: 'section',
-      text: { type: 'mrkdwn', text: `*Sent (from ${payload.email_account}):*\n${quoteBlock(draft, 2500)}` },
+      text: { type: 'mrkdwn', text: `*Sent (from ${payload.email_account}):*\n${quoteBlock(renderLinks(draft).slackMrkdwn, 2500)}` },
     },
     ...(result.ccEmails && result.ccEmails.length ? [{
       type: 'context',

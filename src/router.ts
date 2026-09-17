@@ -4,6 +4,7 @@ import { bookMeeting } from './calendly';
 import { bookSorenMeeting } from './sorenBooking';
 import { deleteHoldsForLead, hasExistingHold, getHoldsForLead } from './googleCalendar';
 import { envOptional, isAutoSendEnabled, isSorenBookingEnabled, SOREN_EMAIL } from './env';
+import { renderLinks } from './linkFormat';
 import {
   postAgentDraft,
   postAutoSentNotification,
@@ -70,11 +71,12 @@ async function autoSendDraft(payload: InstantlyWebhookPayload, result: AgentResu
   }
 
   try {
+    const rendered = renderLinks(result.draft!);
     await replyToEmail({
       reply_to_uuid: payload.email_id,
       eaccount: payload.email_account,
       subject: replySubject(payload.reply_subject || payload.email_subject || ''),
-      body: { text: result.draft! },
+      body: { text: rendered.plainText, html: rendered.html },
       cc: result.ccEmails,
     });
     console.log('[router] autoSendDraft: reply sent to', payload.lead_email, result.ccEmails?.length ? `cc: ${result.ccEmails.join(', ')}` : '');

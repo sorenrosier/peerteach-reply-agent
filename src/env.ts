@@ -39,6 +39,13 @@ export const SOREN_WORKING_HOURS_ET = { startHour: 12, endHour: 18 };
 // His personal Zoom room — every meeting booked onto his calendar uses this, not an
 // auto-generated Google Meet link.
 export const SOREN_ZOOM_URL = 'https://us06web.zoom.us/j/6388859556?pwd=Pimuxq3bTVo8aQr2dVuK2EIWWqYR7y.1';
+// Katie's own public Calendly page (same event type CALENDLY_EVENT_TYPE_URI already
+// manages) — offered as a self-service fallback when a single proposed time doesn't work,
+// so a prospect can pick something from her real live availability without another
+// back-and-forth. Deliberately the same event type as our own booking flow, not a separate
+// one, so it stays simple and anything self-booked here still shows up as busy time the
+// next time we compute availability.
+export const CALENDLY_SCHEDULING_URL = 'https://calendly.com/katie-peerteach/new-meeting';
 
 type RequiredVar = (typeof REQUIRED_VARS)[number];
 type OptionalVar = (typeof OPTIONAL_VARS)[number];

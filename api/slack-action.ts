@@ -6,6 +6,7 @@ import { replyToEmail } from '../src/instantly';
 import { bookMeeting } from '../src/calendly';
 import { bookSorenMeeting } from '../src/sorenBooking';
 import { deleteHoldsForLead, updateEventReminderStatus } from '../src/googleCalendar';
+import { renderLinks } from '../src/linkFormat';
 import { updateViaResponseUrl } from '../src/slack';
 import { SendReplyButtonValue, SlackActionPayload } from '../src/types';
 
@@ -209,11 +210,12 @@ async function processAction(
         }
       }
       try {
+        const rendered = renderLinks(parsed.body_text);
         await replyToEmail({
           reply_to_uuid: parsed.email_id,
           eaccount: parsed.eaccount,
           subject: parsed.subject,
-          body: { text: parsed.body_text },
+          body: { text: rendered.plainText, html: rendered.html },
           cc: parsed.cc,
         });
         if (parsed.calendar_event_id) {
