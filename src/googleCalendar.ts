@@ -119,7 +119,14 @@ export async function getBusyMeetings(startIso: string, endIso: string, calendar
     }));
 }
 
-const HOLD_TTL_HOURS = Number(process.env.HOLD_TTL_HOURS ?? 48);
+// Number(process.env.X ?? default) looks safe but isn't: `??` only falls back on
+// null/undefined, and an env var configured with an empty string is neither -- Number('')
+// is 0, not the default, which would make every hold look instantly expired. Whether this
+// var is actually empty in production is unconfirmed (vercel env pull shows every var as
+// blank right now, including ones directly verified as fine via live behavior, so it can't
+// be trusted to check) -- but envOptional already treats '' the same as unset, so this is a
+// safe, no-downside fix regardless of the real current value.
+const HOLD_TTL_HOURS = Number(envOptional('HOLD_TTL_HOURS') ?? 48);
 
 // Creates a tentative hold on Katie's calendar for a proposed or just-confirmed slot, so
 // Calendly's own availability API stops offering it to other prospects while a reply is
@@ -385,8 +392,12 @@ export async function deleteExpiredHolds(calendarEmail?: string): Promise<{ chec
   return { checked: items.length, deleted };
 }
 
-const MAX_CONSECUTIVE = Number(process.env.MAX_CONSECUTIVE_MEETINGS ?? 3);
-const BREAK_GAP_MINUTES = Number(process.env.MEETING_BREAK_MINUTES ?? 15);
+// Same envOptional fix as HOLD_TTL_HOURS above, same reasoning: if either of these were
+// ever an empty string rather than genuinely unset, `??` wouldn't catch it, and Number('')
+// is 0 -- which would make wouldExceedConsecutiveMeetings's `chainLength > MAX_CONSECUTIVE`
+// true for literally any booking, any time. Safe fix regardless of the real current value.
+const MAX_CONSECUTIVE = Number(envOptional('MAX_CONSECUTIVE_MEETINGS') ?? 3);
+const BREAK_GAP_MINUTES = Number(envOptional('MEETING_BREAK_MINUTES') ?? 15);
 
 // Returns true if booking [candidateStart, candidateEnd) would create a run of more than
 // MAX_CONSECUTIVE meetings with no gap >= BREAK_GAP_MINUTES anywhere in the chain that
