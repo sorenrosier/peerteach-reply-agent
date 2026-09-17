@@ -691,11 +691,24 @@ export function naturalTimePhrase(isoStart: string, now: Date, tz: string): stri
   const slotKey = keyFmt.format(slot);
   const todayKey = keyFmt.format(now);
   const diffDays = Math.round((Date.parse(slotKey) - Date.parse(todayKey)) / 86400000);
+  // Day-of-week (0=Sun..6=Sat) derived from the date-only keys, not from `slot`/`now`
+  // directly — those are moments in time, and re-deriving weekday from a Date built off a
+  // YYYY-MM-DD string sidesteps any timezone reinterpretation.
+  const todayDow = new Date(todayKey).getUTCDay();
+  const slotDow = new Date(slotKey).getUTCDay();
 
   let day: string;
   if (diffDays === 0) day = 'today';
   else if (diffDays === 1) day = 'tomorrow';
-  else if (diffDays >= 2 && diffDays <= 6) day = `this ${weekday}`;
+  else if (diffDays >= 2 && diffDays <= 6) {
+    // "this Weekday" only makes sense if that weekday hasn't happened yet this week —
+    // otherwise the only real future occurrence is next week's, and a diffDays of 2-6 is
+    // NOT enough on its own to tell which: e.g. 6 days from a Thursday lands on next
+    // Wednesday, which already passed this week, so it must be called "next Wednesday,"
+    // not "this Wednesday" (a real bug this fixes — the old code used diffDays alone and
+    // would say "this Wednesday" there, which could send someone to the wrong actual day).
+    day = slotDow > todayDow ? `this ${weekday}` : `next ${weekday}`;
+  }
   else if (diffDays >= 7 && diffDays <= 13) day = `next ${weekday}`;
   else {
     // Far out — a relative reference would be confusing, so use the date.

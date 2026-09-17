@@ -281,6 +281,41 @@ export async function deleteHoldsForLead(leadEmail: string, campaignId: string, 
   }
 }
 
+// Checks whether a real (non-hold, non-cancelled) meeting already exists on this calendar
+// with the given lead as an attendee, at any point in the next 60 days. Specifically for
+// catching a prospect who booked directly via Katie's public self-service Calendly link —
+// that path never touches our own code (no webhook, no deleteHoldsForLead), so without
+// this, the tentative hold from whatever time we originally offered them would just sit
+// there until they reply again or it hits HOLD_TTL_HOURS on its own.
+export async function hasRealBookingForLead(leadEmail: string, calendarEmail?: string): Promise<boolean> {
+  try {
+    const token = await getAccessToken(calendarEmail);
+    const res = await axios.get('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+      headers: { Authorization: `Bearer ${token}` },
+      params: {
+        timeMin: new Date().toISOString(),
+        timeMax: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString(),
+        singleEvents: true,
+        maxResults: 250,
+      },
+      timeout: 10000,
+    });
+    const items = (res.data.items ?? []) as Array<any>;
+    return items.some((e) => {
+      if (e.status === 'cancelled') return false;
+      if (e.extendedProperties?.private?.peerteach_hold) return false; // a hold is not a real booking
+      const attendees = (e.attendees ?? []) as Array<any>;
+      return attendees.some((a: any) => (a.email || '').toLowerCase() === leadEmail.toLowerCase());
+    });
+  } catch (err) {
+    console.warn(
+      `[googleCalendar] hasRealBookingForLead(${leadEmail}) failed, assuming no real booking:`,
+      err instanceof Error ? err.message : String(err),
+    );
+    return false;
+  }
+}
+
 // Sweeps for holds older than HOLD_TTL_HOURS with no matching real booking and deletes
 // them. Meant to be called on a schedule (Vercel Cron) since nothing else naturally
 // triggers cleanup for prospects who never reply.
@@ -295,11 +330,16 @@ export async function deleteExpiredHolds(calendarEmail?: string): Promise<{ chec
       // kind of thing this sweep should catch, but a forward-only timeMin made it
       // invisible to this query no matter how stale it got (found in production: a hold
       // from 5 days ago was still sitting on the calendar, well past HOLD_TTL_HOURS).
-      // Symmetric with the 60-day forward window below — the created_at check just below
-      // is what actually decides deletion, this only needs to be wide enough to surface
-      // every candidate.
-      timeMin: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString(),
-      timeMax: new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString(),
+      //
+      // +/-14 days, NOT +/-60 — confirmed empirically that combining this property filter
+      // with a wide time span makes the Calendar API silently return zero results (no
+      // error, just nothing): reliable through +/-20 days, degraded at +/-30, empty at
+      // +/-45. This sweep never needs more than 14 days either direction anyway — holds
+      // have a HOLD_TTL_HOURS lifetime measured in hours, and a proposed meeting time is
+      // never more than a couple weeks out — so this stays comfortably inside the
+      // reliable range with real margin, not right at the edge of it.
+      timeMin: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000).toISOString(),
+      timeMax: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
       maxResults: 250,
     },
     timeout: 15000,
@@ -321,13 +361,21 @@ export async function deleteExpiredHolds(calendarEmail?: string): Promise<{ chec
     }
     const createdAt = item.extendedProperties?.private?.created_at;
     const createdMs = createdAt ? new Date(createdAt).getTime() : new Date(item.created).getTime();
-    if (createdMs < cutoff) {
+    const leadEmail = item.extendedProperties?.private?.lead_email;
+    // Release early — before HOLD_TTL_HOURS — if this lead already has a real booking
+    // somewhere on this calendar. Most commonly: they booked directly via Katie's public
+    // Calendly link instead of replying to confirm the time we held for them.
+    const alreadyBooked = leadEmail ? await hasRealBookingForLead(leadEmail, calendarEmail) : false;
+    if (createdMs < cutoff || alreadyBooked) {
       try {
         await axios.delete(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${item.id}`, {
           headers: { Authorization: `Bearer ${token}` },
           timeout: 10000,
         });
         deleted++;
+        if (alreadyBooked && createdMs >= cutoff) {
+          console.log(`[googleCalendar] released hold ${item.id} early — ${leadEmail} already has a real booking (likely self-booked via Calendly)`);
+        }
       } catch (err) {
         console.warn(`[googleCalendar] failed to delete expired hold ${item.id}:`, err instanceof Error ? err.message : String(err));
       }
