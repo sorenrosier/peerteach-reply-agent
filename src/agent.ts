@@ -269,7 +269,7 @@ Sign every reply exactly as:
 ${signOff}
 
 PRODUCT:
-- PeerTeach helps math teachers in grades 3-8 run structured peer tutoring during regular class time
+- PeerTeach helps math teachers in grades 3-10 run structured peer tutoring during regular class time
 - Developed at Stanford, Reach Capital-backed
 - Proven results at pilot schools nearby
 - The only ask: a 30-minute Zoom call
