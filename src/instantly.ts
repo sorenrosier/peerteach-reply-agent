@@ -113,16 +113,23 @@ async function findLeadIdByEmail(
   return match?.id ?? null;
 }
 
+// Confirmed directly against the live API (a 202 "background job submitted" response) — the
+// endpoint takes lead_email + interest_value + an optional campaign_id to disambiguate, NOT
+// lead_ids + interest_status as originally written here. That original shape always 400'd;
+// it went unnoticed because nothing called markLeadInterested/markLeadNotInterested until
+// calendlySync.ts started exercising this path for real.
 async function updateInterestStatus(
-  lead_id: string,
-  interest_status: number,
+  lead_email: string,
+  interest_value: number,
+  campaign_id?: string,
 ): Promise<void> {
   await instantlyRequest({
     method: 'POST',
     url: '/leads/update-interest-status',
     data: {
-      lead_ids: [lead_id],
-      interest_status,
+      lead_email,
+      interest_value,
+      ...(campaign_id ? { campaign_id } : {}),
     },
   });
 }
@@ -131,28 +138,63 @@ export async function markLeadNotInterested(
   campaign_id: string,
   lead_email: string,
 ): Promise<void> {
-  const id = await findLeadIdByEmail(campaign_id, lead_email);
-  if (!id) {
-    console.warn(
-      `[instantly] markLeadNotInterested: lead not found for ${lead_email} in campaign ${campaign_id}`,
-    );
-    return;
-  }
-  await updateInterestStatus(id, -1);
+  await updateInterestStatus(lead_email, -1, campaign_id);
 }
 
 export async function markLeadInterested(
   campaign_id: string,
   lead_email: string,
 ): Promise<void> {
-  const id = await findLeadIdByEmail(campaign_id, lead_email);
-  if (!id) {
-    console.warn(
-      `[instantly] markLeadInterested: lead not found for ${lead_email} in campaign ${campaign_id}`,
-    );
-    return;
-  }
-  await updateInterestStatus(id, 1);
+  await updateInterestStatus(lead_email, 1, campaign_id);
+}
+
+export interface LeadLookup {
+  id: string;
+  campaignId: string;
+  interestStatus: number;
+  subsequenceId: string | null;
+}
+
+// Finds a lead by email with no campaign filter — for cases where we only know the email
+// and not which campaign they belong to, e.g. matching a Calendly booking's attendee back
+// to whichever campaign they're in. Confirmed live that /leads/list's `search` param works
+// this way without a `campaign` field.
+export async function findLeadByEmailAnyCampaign(leadEmail: string): Promise<LeadLookup | null> {
+  const res = await instantlyRequest<{ items?: any[]; data?: any[] }>({
+    method: 'POST',
+    url: '/leads/list',
+    data: { search: leadEmail, limit: 5 },
+  });
+  const items = res.items ?? res.data ?? [];
+  const match = items.find(
+    (i: any) => (i.email || '').toLowerCase() === leadEmail.toLowerCase(),
+  );
+  if (!match) return null;
+  return {
+    id: match.id,
+    campaignId: match.campaign,
+    interestStatus: match.lt_interest_status ?? 0,
+    subsequenceId: match.subsequence_id ?? null,
+  };
+}
+
+// Marks a lead as having booked a meeting (interest_value 2).
+export async function markMeetingBooked(leadEmail: string, campaignId: string): Promise<void> {
+  await updateInterestStatus(leadEmail, 2, campaignId);
+}
+
+// Removes a lead from whatever subsequence they're currently in — e.g. a "book a demo"
+// follow-up sequence — once we know they've actually booked, so they stop being asked to
+// do the thing they already did. Endpoint confirmed directly against the live API (no
+// single docs page gave a fully consistent answer): a bogus lead id returns a clean 404
+// "Lead not found" business-logic error, not a route-not-found, confirming this is the
+// right URL and body shape.
+export async function removeLeadFromSubsequence(leadId: string): Promise<void> {
+  await instantlyRequest({
+    method: 'POST',
+    url: '/leads/subsequence/remove',
+    data: { id: leadId },
+  });
 }
 
 export async function updateLeadVariables(
