@@ -3,7 +3,8 @@ import { replyToEmail, fetchEmailThread, checkAndMarkEmailProcessed } from './in
 import { bookMeeting } from './calendly';
 import { bookSorenMeeting } from './sorenBooking';
 import { deleteHoldsForLead, hasExistingHold, getHoldsForLead } from './googleCalendar';
-import { envOptional, isAutoSendEnabled, isSorenBookingEnabled, SOREN_EMAIL } from './env';
+import { envOptional, isAutoSendEnabled, isSorenBookingEnabled, getTeacherCampaignIds, SOREN_EMAIL } from './env';
+import { routeTeacherReply } from './teacherAgent';
 import { renderLinks } from './linkFormat';
 import {
   postAgentDraft,
@@ -101,6 +102,16 @@ export async function routeReply(payload: InstantlyWebhookPayload): Promise<void
   // conflicting invites that a human had to notice and clean up by hand.
   if (await checkAndMarkEmailProcessed(payload.campaign_id, payload.lead_email, payload.email_id)) {
     console.log(`[router] duplicate delivery for email_id=${payload.email_id} — already processed, skipping`);
+    return;
+  }
+
+  // Branch to the teacher-facing system BEFORE any of the admin/principal-specific logic
+  // below runs (holds, booking, the demo-scheduling agent) — deliberately scoped by
+  // campaign_id, not by persona, so this is a true no-op for every existing campaign until
+  // a new teacher-outreach campaign's id is explicitly added to TEACHER_CAMPAIGN_IDS. See
+  // getTeacherCampaignIds() in env.ts for why persona alone would be the wrong signal here.
+  if (getTeacherCampaignIds().has(payload.campaign_id)) {
+    await routeTeacherReply(payload);
     return;
   }
 
