@@ -555,7 +555,7 @@ Never propose times you have not verified with get_available_times.`;
 // since not every admin title literally contains the word "principal".
 const ADMIN_ROLE_PATTERN = /principal|superintendent|director|dean|head of school|assoc(?:iate)? principal|vice principal/i;
 
-function classifyAudience(payload: InstantlyWebhookPayload): 'admin' | 'teacher' | 'unknown' {
+export function classifyAudience(payload: InstantlyWebhookPayload): 'admin' | 'teacher' | 'unknown' {
   // Different campaigns use different casing/values for this custom field — confirmed in
   // production data: some use "Persona": "Site Admin", others use lowercase "persona":
   // "principals". Check both keys and match loosely rather than requiring an exact string.

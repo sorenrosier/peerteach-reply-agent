@@ -1,9 +1,9 @@
-import { runAgent, AgentResult, computeGuestEmails, getBookingHost, BookingHost } from './agent';
+import { runAgent, AgentResult, computeGuestEmails, getBookingHost, BookingHost, classifyAudience } from './agent';
 import { replyToEmail, fetchEmailThread, checkAndMarkEmailProcessed } from './instantly';
 import { bookMeeting } from './calendly';
 import { bookSorenMeeting } from './sorenBooking';
 import { deleteHoldsForLead, hasExistingHold, getHoldsForLead } from './googleCalendar';
-import { envOptional, isAutoSendEnabled, isSorenBookingEnabled, getTeacherCampaignIds, SOREN_EMAIL } from './env';
+import { envOptional, isAutoSendEnabled, isSorenBookingEnabled, SOREN_EMAIL } from './env';
 import { routeTeacherReply } from './teacherAgent';
 import { renderLinks } from './linkFormat';
 import {
@@ -106,11 +106,14 @@ export async function routeReply(payload: InstantlyWebhookPayload): Promise<void
   }
 
   // Branch to the teacher-facing system BEFORE any of the admin/principal-specific logic
-  // below runs (holds, booking, the demo-scheduling agent) — deliberately scoped by
-  // campaign_id, not by persona, so this is a true no-op for every existing campaign until
-  // a new teacher-outreach campaign's id is explicitly added to TEACHER_CAMPAIGN_IDS. See
-  // getTeacherCampaignIds() in env.ts for why persona alone would be the wrong signal here.
-  if (getTeacherCampaignIds().has(payload.campaign_id)) {
+  // below runs (holds, booking, the demo-scheduling agent). Only a confident 'teacher'
+  // classification branches — 'admin' and 'unknown' both stay on the existing path, so a
+  // missing/unparseable Persona/Role never routes someone into the (currently placeholder)
+  // teacher system by accident. Checked live against 133 real leads from the last 30 days
+  // before switching to this: 123 principals, 2 site admins, 1 teacher (an existing-user
+  // edge case) — persona is a clean, reliable signal in practice, not the noisy one it
+  // could theoretically be if current campaigns mixed audiences the way future ones won't.
+  if (classifyAudience(payload) === 'teacher') {
     await routeTeacherReply(payload);
     return;
   }

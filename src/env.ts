@@ -28,7 +28,6 @@ const OPTIONAL_VARS = [
   'AUTO_SEND_ENABLED',
   'SOREN_BOOKING_ENABLED',
   'REMINDER_AUTO_SEND_ENABLED',
-  'TEACHER_CAMPAIGN_IDS',
 ] as const;
 
 // Soren's own calendar is booked directly via Google Calendar (no separate Calendly
@@ -117,22 +116,4 @@ export function isSorenBookingEnabled(): boolean {
 // be checked by a human before trusting the pipeline. Flip to 'true' once validated.
 export function isReminderAutoSendEnabled(): boolean {
   return process.env.REMINDER_AUTO_SEND_ENABLED === 'true';
-}
-
-// Deliberately campaign-scoped, NOT persona-scoped: classifyAudience() in agent.ts already
-// returns 'teacher' for plenty of leads inside today's existing admin/demo-booking campaigns
-// (a campaign's audience list mixes principals and teachers; only the pricing framing
-// differs by persona today). Branching the whole response system on persona alone would
-// silently reroute a large slice of *current* leads into the new teacher system the moment
-// it exists, even though they're being handled correctly today. Routing by campaign_id
-// instead means literally nothing changes until a new teacher-outreach campaign's id is
-// explicitly added here — empty by default.
-export function getTeacherCampaignIds(): Set<string> {
-  const raw = envOptional('TEACHER_CAMPAIGN_IDS') ?? '';
-  return new Set(
-    raw
-      .split(',')
-      .map((s) => s.trim())
-      .filter(Boolean),
-  );
 }

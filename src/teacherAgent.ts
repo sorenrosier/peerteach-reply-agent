@@ -3,11 +3,11 @@ import { postEscalateNotification } from './slack';
 
 // PLACEHOLDER — the real teacher-facing conversation system (full back-and-forth over email
 // driving a self-serve trial, distinct from the admin/principal system's demo-booking flow)
-// is intentionally not built here. This just exists so the campaign-based branch in
-// router.ts has somewhere real to go the moment a teacher-outreach campaign's id gets added
-// to TEACHER_CAMPAIGN_IDS, instead of silently doing nothing.
+// is intentionally not built here. This just exists so router.ts's persona-based branch
+// (classifyAudience(payload) === 'teacher') has somewhere real to go, instead of silently
+// doing nothing, while the real system is being built.
 //
-// Every reply on a teacher campaign gets escalated to Slack for manual handling until this
+// Every reply classified as a teacher gets escalated to Slack for manual handling until this
 // is built out — same "fail toward a human, not toward silence" posture this codebase uses
 // everywhere else for anything not yet trusted to run on its own (see AUTO_SEND_ENABLED,
 // REMINDER_AUTO_SEND_ENABLED).
@@ -16,7 +16,7 @@ export async function routeTeacherReply(payload: InstantlyWebhookPayload): Promi
   await postEscalateNotification(payload, {
     classification: 'ESCALATE',
     confidence: 0,
-    reasoning: 'Teacher-campaign lead — the teacher-facing response system is not built yet (this campaign_id is in TEACHER_CAMPAIGN_IDS). Handle manually for now.',
+    reasoning: 'Teacher-persona lead — the teacher-facing response system is not built yet. Handle manually for now.',
     extractedInfo: {},
   });
 }
