@@ -278,7 +278,7 @@ PRICING / "IS IT FREE?" HANDLING:
 - Do NOT lead with "it's free" as the selling point. Let the value carry the message.
 - If asked directly about pricing or whether the pilot is free, answer plainly and specifically: yes, the first month/pilot is fully covered by our grant funding, then immediately say what that covers.
 - Always scope it to the pilot period — make clear what is and isn't covered.
-- The framing differs by AUDIENCE (see context) — a teacher and a school-level decision-maker are asking for different reasons and need different levels of detail:
+- The framing differs by AUDIENCE (see context) — a teacher and a school-level decision-maker are asking for different reasons and need different levels of detail. The TEACHER/ADMIN labels below, and the word "audience," are private notes for you: never mention the audience, which framing you chose, or why in the email, and never write about the prospect in the third person ("since she's a principal..."). Write straight to them, as if you simply knew how to talk to them:
 
   TEACHER audience — keep it classroom-scoped, keep continued-cost language soft since they're usually not the budget holder:
   "Great question. Our grant funding covers getting your classroom fully up and running this first month: we train all of your students to be effective peer coaches and facilitate the first several sessions with you so the routine takes hold. Once that's in place, most teachers want to keep it going, since the platform is what keeps students coaching each other well throughout the year. Continued access does have a cost, and when a class wants to continue, we help the school find a path that fits. The best next step is a quick 30-minute Zoom so I can show you how it works and answer anything else that comes up."
@@ -1115,6 +1115,17 @@ async function executeToolWithRetry(
   }
 }
 
+// Internal vocabulary and third-person talk about the recipient — neither belongs in an
+// email addressed TO them. Deliberately narrow: checked against ~850 real sent emails
+// and flagged only the one real leak. Words like "instruction" and "template" were left
+// out because ordinary copy uses them ("math instruction").
+const LEAKED_META_PATTERN = /\baudience\b|\bframing\b|\bpersona\b|\b(?:she|he)'s (?:a|an|the)\b|\bsince (?:she|he)\b|here's the relevant/i;
+
+export function findLeakedMetaText(text: string): string | null {
+  const m = text.match(LEAKED_META_PATTERN);
+  return m ? m[0] : null;
+}
+
 export async function runAgent(
   payload: InstantlyWebhookPayload,
   thread: ThreadEmail[],
@@ -1202,6 +1213,25 @@ export async function runAgent(
         return {
           action: 'escalate',
           reason: `Agent output didn't look like a real reply (missing the standard "Hi [name]," opening) — likely leaked internal reasoning instead of drafting one. Raw output: "${cleaned.slice(0, 400)}"`,
+          booked: !!pendingBooking,
+          pendingBooking,
+          ccEmails: guestEmails,
+        };
+      }
+
+      // Second safety net, for narration in the MIDDLE of an otherwise real reply — the "Hi"
+      // check above can't see it. A real incident auto-sent "Since she's a principal (admin
+      // audience), here's the relevant framing:" to a principal: the model explained which
+      // internal template it had picked, in the third person, inside the email body. Unlike
+      // the check above this keeps the draft as a suggested reply, since everything around
+      // the leaked line is usually a perfectly good email a human can fix in seconds.
+      const leaked = findLeakedMetaText(cleaned);
+      if (leaked) {
+        console.warn(`[agent] draft contains internal wording ("${leaked}") — escalating instead of auto-sending:`, cleaned.slice(0, 300));
+        return {
+          action: 'escalate',
+          reason: `Draft contains internal wording that shouldn't reach a prospect ("${leaked}") — likely the model narrating its own instructions inside the email. Edit that line out before sending.`,
+          draft: cleaned,
           booked: !!pendingBooking,
           pendingBooking,
           ccEmails: guestEmails,
