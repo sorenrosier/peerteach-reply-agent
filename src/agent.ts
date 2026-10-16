@@ -375,6 +375,7 @@ CALENDLY SELF-SERVICE FALLBACK (booking_host 'katie' only):
 - Katie-hosted offers now propose a single time, not two — get_available_times already returns just one for her. Immediately after it, add one line offering her Calendly page as a fallback in case that time doesn't work, using this EXACT markdown syntax so it renders as a real link (do not write the raw URL out in prose, and do not alter it): [my Calendly](https://calendly.com/katie-peerteach/new-meeting)
   Example: "I have this Thursday at 2:00 PM CDT open — does that work? If not, feel free to just grab whatever time's easiest for you on [my Calendly](https://calendly.com/katie-peerteach/new-meeting)."
 - Say "my Calendly" only when sending as Katie herself. If booking_host is 'katie' but you're sending as someone else, say "Katie's Calendly" instead — it's specifically her page.
+- The Calendly link is a backup, not the answer to "do you have something else?". If the prospect asks for a different, later, or earlier time, offer another REAL time first: call get_available_times again with start_time at or after what they want, and offer what it returns (still just one, still with the Calendly line). Only send them to Calendly alone when the tool really has nothing in the range they want. Never tell them a day has only one slot or nothing later unless the tool's total_open_in_range says so.
 - This is Katie-only. Soren-hosted offers (booking_host 'soren') are completely unchanged by this — still 2 times, no link, since he has no public self-service page.
 
 WHEN THE PROSPECT CONFIRMS A PREVIOUSLY OFFERED TIME BY NAME ONLY (e.g. "Tuesday works!", "the Monday one works", no clock time repeated):
@@ -954,10 +955,23 @@ async function executeToolWithRetry(
         instruction +=
           ` IMPORTANT: you're offering a single time now (not two) — after it, add the Calendly self-service fallback line exactly as described in the CALENDLY SELF-SERVICE FALLBACK section of your instructions, using the markdown link format given there.`;
       }
+      // Katie-hosted offers show the model only ONE slot (slots[0]) — which used to make it
+      // look as though that was the only slot that existed. A real incident: a prospect asked
+      // "Anything later?" on a Monday with 12 open slots, the tool handed back the same
+      // earliest slot again, and the model told him "That's the only Monday slot I have
+      // available." So say plainly how many are open in the range and list them (capped),
+      // and route "something different" through a fresh call so the hold lands on whatever
+      // actually gets offered, not on a time lifted from this informational list.
+      const OPEN_LIST_CAP = 24;
+      const openTimes = slots.slice(0, OPEN_LIST_CAP).map((s) => formatter.format(new Date(s.startTime)));
+      instruction +=
+        ` NOTE: you're only being shown the first open time as a suggestion. total_open_in_range is how many times are actually open in the range you searched, and open_times_in_range lists them${slots.length > OPEN_LIST_CAP ? ` (first ${OPEN_LIST_CAP} only)` : ''}. If the prospect wants a different or later time, call get_available_times AGAIN with start_time at or after the time they want — do not offer a time from open_times_in_range that you haven't fetched that way (only fetched times get held). NEVER tell the prospect a day has only one slot, nothing later, or limited availability unless total_open_in_range is 1.`;
       return {
         data: {
           requested_time_available: requestedAvailable,
           suggested_times: suggested,
+          total_open_in_range: slots.length,
+          open_times_in_range: openTimes,
           booking_host: host, // 'katie' or 'soren' — whoever will actually host if one of these is booked, see BOOKING HOST rules
           instruction,
         },
