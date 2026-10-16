@@ -323,6 +323,44 @@ export async function hasRealBookingForLead(leadEmail: string, calendarEmail?: s
   }
 }
 
+// A real (non-hold, non-cancelled) meeting starting within a few minutes of `targetIso` with
+// this lead as an attendee — i.e. their OWN already-booked meeting. Why: a time that's
+// already booked for the prospect stops showing as open in Calendly, so when they confirm
+// or "adjust to" that exact time, availability looks like "taken" and the agent told one
+// prospect, twice, that his own meeting time "doesn't work". Narrow +/-2h query with no
+// property filter, so it's unaffected by the wide-window quirk (see deleteExpiredHolds).
+// Fails open (null) so a lookup problem behaves exactly as before.
+export async function findLeadBookingAt(
+  leadEmail: string,
+  targetIso: string,
+  calendarEmail?: string,
+): Promise<{ eventId: string; startIso: string } | null> {
+  try {
+    const token = await getAccessToken(calendarEmail);
+    const target = new Date(targetIso).getTime();
+    const res = await axios.get('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+      headers: { Authorization: `Bearer ${token}` },
+      params: {
+        timeMin: new Date(target - 2 * 3600000).toISOString(),
+        timeMax: new Date(target + 2 * 3600000).toISOString(),
+        singleEvents: true,
+        maxResults: 50,
+      },
+      timeout: 10000,
+    });
+    const match = ((res.data.items ?? []) as Array<any>).find((e) => {
+      if (e.status === 'cancelled') return false;
+      if (e.extendedProperties?.private?.peerteach_hold) return false;
+      if (!e.start?.dateTime || Math.abs(new Date(e.start.dateTime).getTime() - target) > 5 * 60000) return false;
+      return ((e.attendees ?? []) as Array<any>).some((a: any) => (a.email || '').toLowerCase() === leadEmail.toLowerCase());
+    });
+    return match ? { eventId: match.id, startIso: new Date(match.start.dateTime).toISOString() } : null;
+  } catch (err) {
+    console.warn(`[googleCalendar] findLeadBookingAt(${leadEmail}) failed, assuming none:`, err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
 // Sweeps for holds older than HOLD_TTL_HOURS with no matching real booking and deletes
 // them. Meant to be called on a schedule (Vercel Cron) since nothing else naturally
 // triggers cleanup for prospects who never reply.

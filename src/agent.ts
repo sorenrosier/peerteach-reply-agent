@@ -2,7 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { env, envOptional, isSorenBookingEnabled, SOREN_EMAIL } from './env';
 import { getAvailableTimes, bookMeeting } from './calendly';
 import { getSorenAvailableTimes } from './sorenBooking';
-import { getBusyMeetings, wouldExceedConsecutiveMeetings, createHold } from './googleCalendar';
+import { getBusyMeetings, wouldExceedConsecutiveMeetings, createHold, findLeadBookingAt } from './googleCalendar';
 import { InstantlyWebhookPayload } from './types';
 
 export type BookingHost = 'katie' | 'soren';
@@ -386,7 +386,7 @@ WHEN THE PROSPECT CONFIRMS A PREVIOUSLY OFFERED TIME BY NAME ONLY (e.g. "Tuesday
 WHEN THE PROSPECT PROPOSES SPECIFIC TIMES:
 - Pass each as requested_time in ISO UTC format to verify availability. Pick the best available slot yourself — do NOT ask them which they prefer. Just confirm the chosen time directly.
 - If the prospect proposed multiple times and more than one is available, pick the earliest available one and confirm it.
-- If requested_time_available is true, confirm that time directly and book it.
+- If requested_time_available is true, confirm that time directly and book it. EXCEPTION: if the result also says already_booked_for_prospect, the time is their own existing meeting — just confirm they're all set, and do NOT call book_meeting or offer other times.
 - If requested_time_available is false, they asked for a time that isn't actually open — this includes a time that's merely close to an open slot but not exact (e.g. they say 11:05 or 11:15 when the real slot is 11:00). Never silently book the closest slot as if it were what they asked for, even when the gap looks trivial — a few minutes can be a real constraint for someone on the other end, and there's no way to know that from here. Ask instead:
   - booking_host 'katie': "No worries at all! I'm not available exactly then — would [closest time] work instead? If not, feel free to grab whatever time's easiest for you on [my Calendly](https://calendly.com/katie-peerteach/new-meeting)." (get_available_times only returns one closest option for her — that's expected, not a bug.)
   - booking_host 'soren': "No worries at all! I'm not available then. Would [alt time] or [alt time] work instead? Happy to find another time if not." (up to two, unchanged.)
@@ -858,6 +858,31 @@ async function executeToolWithRetry(
       if (requestedTime) {
         const reqMs = new Date(requestedTime).getTime();
         const exact = slots.find((s) => Math.abs(new Date(s.startTime).getTime() - reqMs) < 60 * 1000);
+        // Not open — but "not open" can simply mean it's already THIS prospect's own booked
+        // meeting (booked time drops out of availability). Check before offering anything
+        // else, or the agent tells them their own meeting time doesn't work.
+        const ownBooking =
+          !exact && envOptional('GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON')
+            ? await findLeadBookingAt(payload.lead_email, requestedTime, host === 'soren' ? SOREN_EMAIL : undefined)
+            : null;
+        if (ownBooking) {
+          console.log(`[agent] requested time ${requestedTime} is already booked for ${payload.lead_email} (event ${ownBooking.eventId}) — confirming, not re-offering`);
+          const nowOwn = new Date();
+          return {
+            data: {
+              requested_time_available: true,
+              already_booked_for_prospect: true,
+              suggested_times: [{
+                startTime: ownBooking.startIso,
+                formatted: formatter.format(new Date(ownBooking.startIso)),
+                natural: naturalTimePhrase(ownBooking.startIso, nowOwn, tz),
+              }],
+              booking_host: host,
+              instruction:
+                'This exact time is ALREADY BOOKED on the calendar for this prospect, it is their own meeting, which is why it no longer shows as open. Do NOT say it is unavailable, do NOT offer other times, and do NOT call book_meeting (it would double-book). Just confirm warmly that they are all set for this time, using its "natural" phrasing, and mention the calendar invite already has the details.',
+            },
+          };
+        }
         if (exact) {
           picked = [exact];
           requestedAvailable = true;
