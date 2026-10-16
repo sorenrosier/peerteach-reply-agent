@@ -67,6 +67,7 @@ export async function processReminders(): Promise<{ checked: number; sent: numbe
           subject: booking.subject,
           body: { text: draft },
           cc: booking.otherGuests.length ? booking.otherGuests : undefined,
+          stamp: { campaignId: booking.campaignId, leadEmail: booking.leadEmail },
         });
         await updateEventReminderStatus(booking.eventId, 'sent', SOREN_EMAIL);
         sent++;

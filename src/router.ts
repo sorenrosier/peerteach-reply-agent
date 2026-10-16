@@ -1,5 +1,5 @@
 import { runAgent, AgentResult, computeGuestEmails, getBookingHost, BookingHost, classifyAudience } from './agent';
-import { replyToEmail, fetchEmailThread, checkAndMarkEmailProcessed } from './instantly';
+import { replyToEmail, fetchEmailThread, checkAndMarkEmailProcessed, findRecentHumanReply } from './instantly';
 import { bookMeeting } from './calendly';
 import { bookSorenMeeting } from './sorenBooking';
 import { deleteHoldsForLead, hasExistingHold, getHoldsForLead } from './googleCalendar';
@@ -79,6 +79,7 @@ async function autoSendDraft(payload: InstantlyWebhookPayload, result: AgentResu
       subject: replySubject(payload.reply_subject || payload.email_subject || ''),
       body: { text: rendered.plainText, html: rendered.html },
       cc: result.ccEmails,
+      stamp: { campaignId: payload.campaign_id, leadEmail: payload.lead_email },
     });
     console.log('[router] autoSendDraft: reply sent to', payload.lead_email, result.ccEmails?.length ? `cc: ${result.ccEmails.join(', ')}` : '');
   } catch (err) {
@@ -276,6 +277,29 @@ export async function routeReply(payload: InstantlyWebhookPayload): Promise<void
           return;
         }
         if (isAutoSendEnabled()) {
+          // If a teammate has been writing to this lead by hand, don't auto-send over them:
+          // hold the draft for one-click review instead (same card as any escalation, draft
+          // attached). The agent can't know a human is mid-conversation, and in real
+          // threads this produced doubled replies and an auto-reply contradicting a time
+          // the human had just confirmed. Only affects threads a human recently touched.
+          const humanReply = await findRecentHumanReply(payload.campaign_id, payload.lead_email);
+          if (humanReply) {
+            const ago = humanReply.minutesAgo >= 120 ? `${Math.round(humanReply.minutesAgo / 60)} hours` : `${humanReply.minutesAgo} min`;
+            console.log(`[router] holding auto-send for ${payload.lead_email}: teammate replied ${ago} ago`);
+            await postEscalateNotification(
+              payload,
+              {
+                classification: 'ESCALATE',
+                confidence: 0,
+                reasoning: `A teammate wrote to this lead ${ago} ago ("${humanReply.preview}"). Holding the agent's draft for your review instead of auto-sending, so it doesn't cross or contradict what they said.`,
+                extractedInfo: {},
+              },
+              result.draft,
+              result.ccEmails,
+              result.pendingBooking,
+            );
+            return;
+          }
           await autoSendDraft(payload, result);
           return;
         }

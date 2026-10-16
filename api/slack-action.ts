@@ -217,6 +217,7 @@ async function processAction(
           subject: parsed.subject,
           body: { text: rendered.plainText, html: rendered.html },
           cc: parsed.cc,
+          stamp: parsed.lead_email && parsed.campaign_id ? { campaignId: parsed.campaign_id, leadEmail: parsed.lead_email } : undefined,
         });
         if (parsed.calendar_event_id) {
           await updateEventReminderStatus(

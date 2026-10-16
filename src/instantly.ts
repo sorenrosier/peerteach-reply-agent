@@ -66,6 +66,10 @@ export interface ReplyToEmailParams {
   subject: string;
   body: { text: string; html?: string };
   cc?: string[];
+  // Pass for any send made by this system (auto-send, a human approving a draft in Slack,
+  // reminders) so it can later be told apart from a message a teammate typed by hand — see
+  // recordAgentSend.
+  stamp?: { campaignId: string; leadEmail: string };
 }
 
 export async function replyToEmail(params: ReplyToEmailParams): Promise<void> {
@@ -86,6 +90,106 @@ export async function replyToEmail(params: ReplyToEmailParams): Promise<void> {
       ...(params.cc && params.cc.length ? { cc_address_email_list: params.cc.join(',') } : {}),
     },
   });
+  if (params.stamp) await recordAgentSend(params.stamp.campaignId, params.stamp.leadEmail);
+}
+
+// Instantly doesn't distinguish an email sent through the API (ours) from one a teammate
+// typed in Unibox — checked on a real thread: identical fields, both type 3. So every send
+// this system makes leaves its own record: epoch seconds, in a lead custom variable (same
+// technique as the duplicate-delivery guard), comma-separated, trimmed to recent sends. Any
+// reply in a thread with no matching record is a human's. Never throws: this runs after the
+// email is already out, and a lost record only risks a false "human" read, which just means
+// one extra reply held for review.
+const AGENT_SEND_VAR = 'agent_send_ts';
+const AGENT_SEND_KEEP_SECONDS = 3 * 24 * 3600;
+// Slack's own record of an agent send lands 0-4s after Instantly's timestamp (measured over
+// ~300 real sends); anything past that is a different message.
+const AGENT_SEND_MATCH_SECONDS = 15;
+export const HUMAN_REPLY_HOLD_HOURS = 6;
+
+function parseSendStamps(raw: unknown): number[] {
+  return String(raw ?? '')
+    .split(',')
+    .map((s) => Number(s))
+    .filter((n) => Number.isFinite(n) && n > 0);
+}
+
+export async function recordAgentSend(campaign_id: string, lead_email: string): Promise<void> {
+  const sentAt = Math.floor(Date.now() / 1000);
+  try {
+    const id = await findLeadIdByEmail(campaign_id, lead_email);
+    if (!id) return;
+    const lead = await instantlyRequest<{ payload?: Record<string, string> }>({
+      method: 'GET',
+      url: `/leads/${id}`,
+    });
+    const kept = parseSendStamps(lead.payload?.[AGENT_SEND_VAR]).filter((t) => t >= sentAt - AGENT_SEND_KEEP_SECONDS);
+    kept.push(sentAt);
+    await instantlyRequest({
+      method: 'PATCH',
+      url: `/leads/${id}`,
+      data: { custom_variables: { [AGENT_SEND_VAR]: kept.slice(-12).join(',') } },
+    });
+  } catch (err) {
+    console.warn('[instantly] recordAgentSend failed (email was sent):', err instanceof Error ? err.message : String(err));
+  }
+}
+
+export interface HumanReply {
+  sentAt: number; // epoch seconds
+  minutesAgo: number;
+  preview: string;
+}
+
+// The most recent message in the window that a teammate wrote by hand: a type-3 (manual
+// reply) email with no matching agent-send record. Campaign sequence emails are a
+// different type and never count. Pure, so it can be checked against real thread data.
+export function findHumanReply(
+  emails: Array<{ t: number; ue: number; prev: string }>,
+  agentStamps: number[],
+  nowSec: number,
+  hours = HUMAN_REPLY_HOLD_HOURS,
+): HumanReply | null {
+  const human = emails
+    .filter((e) => e.ue === 3 && e.t >= nowSec - hours * 3600 && e.t <= nowSec)
+    .filter((e) => !agentStamps.some((s) => Math.abs(s - e.t) <= AGENT_SEND_MATCH_SECONDS))
+    .sort((a, b) => b.t - a.t)[0];
+  if (!human) return null;
+  return { sentAt: human.t, minutesAgo: Math.max(0, Math.round((nowSec - human.t) / 60)), preview: human.prev };
+}
+
+// Did a teammate write to this lead recently? Checked right before an auto-send: the agent
+// can't know a human is mid-conversation (a real incident: the agent and Katie replied to
+// the same message 30 seconds apart; another, the agent told a prospect his already-agreed
+// time "doesn't work" right after Katie had confirmed it). Fails open — if anything here
+// errors, the reply auto-sends exactly as before.
+export async function findRecentHumanReply(campaign_id: string, lead_email: string): Promise<HumanReply | null> {
+  try {
+    const nowSec = Date.now() / 1000;
+    const res = await instantlyRequest<{ items?: any[] }>({
+      method: 'GET',
+      url: '/emails',
+      params: { lead: lead_email, limit: 30 },
+    });
+    const emails = (res.items ?? []).map((e: any) => ({
+      t: new Date(e.timestamp_email).getTime() / 1000,
+      ue: e.ue_type as number,
+      prev: String(e.content_preview ?? '').replace(/\s+/g, ' ').trim().slice(0, 140),
+    }));
+    // Cheap exit for the common case: no manual replies in the window at all.
+    if (!emails.some((e) => e.ue === 3 && e.t >= nowSec - HUMAN_REPLY_HOLD_HOURS * 3600)) return null;
+
+    let stamps: number[] = [];
+    const id = await findLeadIdByEmail(campaign_id, lead_email);
+    if (id) {
+      const lead = await instantlyRequest<{ payload?: Record<string, string> }>({ method: 'GET', url: `/leads/${id}` });
+      stamps = parseSendStamps(lead.payload?.[AGENT_SEND_VAR]);
+    }
+    return findHumanReply(emails, stamps, nowSec);
+  } catch (err) {
+    console.warn('[instantly] findRecentHumanReply failed, not holding:', err instanceof Error ? err.message : String(err));
+    return null;
+  }
 }
 
 // Instantly v2 lead endpoints require lead UUIDs, not emails.
