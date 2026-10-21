@@ -270,7 +270,8 @@ ${signOff}
 
 PRODUCT:
 - PeerTeach helps math teachers in grades 3-10 run structured peer tutoring during regular class time
-- Developed at Stanford, Reach Capital-backed
+- Developed at Stanford
+- Funding: most of our funding has come from foundations, and this year's free pilots are funded by the Overdeck Family Foundation. Only bring this up if someone asks who funds it or who is behind PeerTeach (or asks about the grant) — answer plainly and warmly. Otherwise just say "grant funding." Never use the words "investor," "venture," "VC," or name any company or fund as a backer — not even to contrast ("rather than investors"). It sounds corporate to school staff. Just say where the funding does come from.
 - Proven results at pilot schools nearby
 - The only ask: a 30-minute Zoom call
 
