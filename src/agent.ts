@@ -2,8 +2,8 @@ import Anthropic from '@anthropic-ai/sdk';
 import { env, envOptional, isSorenBookingEnabled, SOREN_EMAIL } from './env';
 import { getAvailableTimes, bookMeeting } from './calendly';
 import { getSorenAvailableTimes } from './sorenBooking';
-import { getBusyMeetings, wouldExceedConsecutiveMeetings, createHold, findLeadBookingAt } from './googleCalendar';
-import { InstantlyWebhookPayload } from './types';
+import { getBusyMeetings, wouldExceedConsecutiveMeetings, createHold, findLeadBookingAt, findSlotConflicts } from './googleCalendar';
+import { InstantlyWebhookPayload, DisplacedHold } from './types';
 
 export type BookingHost = 'katie' | 'soren';
 
@@ -34,6 +34,9 @@ export interface AgentResult {
     timezone: string;
     guests: string[];
     host: BookingHost; // which calendar this books onto — Katie's (Calendly) or Soren's (Google Calendar direct)
+    // Other leads' tentative holds on this exact slot that this booking overrides — released
+    // (and those leads told) only when a human approves the Send. See displacement.ts.
+    displaces?: DisplacedHold[];
   };
   // Everyone else on the thread (colleagues looped in via to/cc) who should be cc'd if
   // this draft is sent. Computed in code from thread data, not left to the model.
@@ -78,9 +81,13 @@ const TOOLS: Anthropic.ToolUnion[] = [
           type: 'string',
           description: 'IANA timezone to format results in, based on prospect location (e.g. America/New_York, America/Chicago, America/Denver, America/Los_Angeles)',
         },
+        requested_local_time: {
+          type: 'string',
+          description: 'PREFERRED way to say what time the prospect asked for: their LOCAL clock time in the `timezone` you pass, formatted YYYY-MM-DDTHH:mm, exactly as they wrote it. E.g. they said "Tuesday at 1:30 PM" and that Tuesday is 2026-10-27 -> "2026-10-27T13:30". The tool converts it to UTC itself, correctly around daylight-saving changes; converting by hand has gone wrong (an hour off) in testing. Set this whenever the prospect named a specific day and time.',
+        },
         requested_time: {
           type: 'string',
-          description: 'Optional: ISO UTC time the prospect requested (e.g. "2026-06-05T19:00:00Z"). If provided, the tool will confirm if it is available or return the 2 closest alternatives.',
+          description: 'Only if you cannot give requested_local_time: ISO UTC time the prospect requested (e.g. "2026-06-05T19:00:00Z"). ALWAYS set this whenever the prospect named a specific day and time, even if you also pass a range: it is the only way the tool can confirm that exact time. A time that merely looks taken is sometimes only tentatively held for someone else, or is the prospect\'s own meeting, and the tool resolves both. If provided, the tool confirms it is available or returns the closest alternative.',
         },
       },
       required: ['start_time', 'end_time', 'timezone'],
@@ -240,9 +247,25 @@ If the prospect is confirming one of these by name only — e.g. "Tuesday works"
 `;
 }
 
+// Times that were offered to this prospect and then given to someone else (see
+// displacement.ts). Read from the lead's record by router.ts. Without this the agent would see
+// a prospect "accepting" the old time, find it taken, and have no idea why — or worse, treat
+// their acceptance as a fresh request.
+function buildReleasedSlotsBlock(releasedSlots: string[]): string {
+  if (releasedSlots.length === 0) return '';
+  const fmt = new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York', timeZoneName: 'short' });
+  const lines = releasedSlots.map((t) => `- ${fmt.format(new Date(t))} (iso_utc: ${t})`).join('\n');
+  return `
+TIMES THAT WERE RELEASED TO SOMEONE ELSE (offered to this prospect earlier, no longer available):
+${lines}
+If the prospect accepts one of these, or asks whether it is still open: tell them kindly and plainly that it has since been taken (e.g. "I'm sorry, that time got taken since I last wrote"). Do NOT book it and do not imply it is open. Then offer one different real time via get_available_times, with the usual Calendly line. Our earlier email may already have told them it's gone, so keep this reply short and warm either way.
+`;
+}
+
 function buildSystemPrompt(
   payload: InstantlyWebhookPayload,
   previousOfferedTimes: Array<{ startTime: string; host: BookingHost }> = [],
+  releasedSlots: string[] = [],
 ): string {
   const { firstName: senderFirst, signOff } = getSenderIdentity(payload.email_account);
   const isKreg = senderFirst === 'Kreg';
@@ -296,7 +319,7 @@ PRICING / "IS IT FREE?" HANDLING:
 
 CURRENT DATE/TIME: ${dateTimeStr}
 TODAY (ISO): ${todayIso}
-${buildPreviousOfferedTimesBlock(previousOfferedTimes)}
+${buildPreviousOfferedTimesBlock(previousOfferedTimes)}${buildReleasedSlotsBlock(releasedSlots)}
 SCHOOL YEAR CONTEXT:
 ${getSchoolYearContext(now)}
 - You know today's date (above) and the part of the school year it is. When it fits naturally, a brief, genuine seasonal touch is good ("hope you're enjoying the summer," "as you close out the year"). Keep it to a short phrase, never forced, and never more than once per email. If it does not fit the message, leave it out.
@@ -385,9 +408,9 @@ WHEN THE PROSPECT CONFIRMS A PREVIOUSLY OFFERED TIME BY NAME ONLY (e.g. "Tuesday
 - If that list is empty or nothing in it clearly matches what they said (e.g. the holds already expired), fall back to reading the thread history for the times you offered, but treat this as a lower-confidence path — if you're not fully sure which exact time they mean, verify with get_available_times using requested_time before calling book_meeting, or escalate rather than guess.
 
 WHEN THE PROSPECT PROPOSES SPECIFIC TIMES:
-- Pass each as requested_time in ISO UTC format to verify availability. Pick the best available slot yourself — do NOT ask them which they prefer. Just confirm the chosen time directly.
+- Pass each as requested_local_time (their clock time in their timezone, YYYY-MM-DDTHH:mm, exactly as they wrote it; do NOT convert to UTC yourself) to verify availability. Pick the best available slot yourself — do NOT ask them which they prefer. Just confirm the chosen time directly.
 - If the prospect proposed multiple times and more than one is available, pick the earliest available one and confirm it.
-- If requested_time_available is true, confirm that time directly and book it. EXCEPTION: if the result also says already_booked_for_prospect, the time is their own existing meeting — just confirm they're all set, and do NOT call book_meeting or offer other times.
+- If requested_time_available is true, confirm that time directly and book it. EXCEPTION: if the result also says already_booked_for_prospect, the time is their own existing meeting — just confirm they're all set, and do NOT call book_meeting or offer other times. If it says displaces_hold, the time was only tentatively held for someone else and is now being given to this prospect: book it, and in the confirmation say casually and warmly that you moved a few things around so their time works (e.g. "I moved a few things around so that time works. Just sent you an invite."; vary the wording, never scripted). Never mention another prospect or a hold.
 - If requested_time_available is false, they asked for a time that isn't actually open — this includes a time that's merely close to an open slot but not exact (e.g. they say 11:05 or 11:15 when the real slot is 11:00). Never silently book the closest slot as if it were what they asked for, even when the gap looks trivial — a few minutes can be a real constraint for someone on the other end, and there's no way to know that from here. Ask instead:
   - booking_host 'katie': "No worries at all! I'm not available exactly then — would [closest time] work instead? If not, feel free to grab whatever time's easiest for you on [my Calendly](https://calendly.com/katie-peerteach/new-meeting)." (get_available_times only returns one closest option for her — that's expected, not a bug.)
   - booking_host 'soren': "No worries at all! I'm not available then. Would [alt time] or [alt time] work instead? Happy to find another time if not." (up to two, unchanged.)
@@ -764,6 +787,64 @@ export interface AgentMocks {
   bookMeeting?: typeof bookMeeting;
 }
 
+// When a requested time isn't open: is the ONLY thing in the way other leads' unconfirmed
+// "proposed" holds that start at exactly this time? Then the requested time wins over them
+// (the new rule: a lead asking for a time beats a tentative offer nobody accepted). Never
+// overrides a "confirmed, awaiting send" hold (that lead already said yes), a real meeting,
+// or anything misaligned with the requested time. Calendly's own working-hours and buffer
+// rules can also make a slot unavailable, so the requested time must also sit next to
+// genuinely open slots; the real booking at Send time is the final check. Returns null for
+// "not applicable" and on any error, so behavior falls back to the existing near-miss path.
+async function findOverridableHolds(
+  requestedIso: string,
+  calendarEmail: string | undefined,
+  leadEmail: string,
+  openSlots: Array<{ startTime: string }>,
+): Promise<DisplacedHold[] | null> {
+  const start = new Date(requestedIso).getTime();
+  const c = await findSlotConflicts(new Date(start).toISOString(), new Date(start + 30 * 60 * 1000).toISOString(), calendarEmail);
+  if (!c || c.realConflict) return null;
+  const others = c.holds.filter((h) => h.leadEmail.toLowerCase() !== leadEmail.toLowerCase());
+  if (others.length === 0) return null;
+  if (!others.every((h) => /^proposed/i.test(h.label) && Math.abs(new Date(h.startIso).getTime() - start) < 60 * 1000)) return null;
+  if (!openSlots.some((s) => Math.abs(new Date(s.startTime).getTime() - start) <= 60 * 60 * 1000)) return null;
+  return others.map((h) => ({
+    eventId: h.eventId,
+    calendarEmail: h.calendarEmail,
+    leadEmail: h.leadEmail,
+    leadName: h.leadName,
+    campaignId: h.campaignId,
+    label: h.label,
+    timezone: h.timezone,
+    startIso: h.startIso,
+    endIso: h.endIso,
+  }));
+}
+
+// Converts a local wall-clock time ("2026-10-27T13:30") in an IANA timezone to a UTC ISO
+// string, correct across daylight-saving changes. The model used to do this arithmetic itself
+// and got it wrong (an hour off, taking daylight saving as already over) in about half of test
+// runs, which silently booked a different time than the one it told the prospect. Returns null
+// if the input or timezone isn't usable, and the caller falls back to requested_time.
+export function localToUtcIso(local: string, tz: string): string | null {
+  const m = local.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  if (!m) return null;
+  try {
+    const [, y, mo, d, h, mi] = m.map(Number);
+    const asUtc = Date.UTC(y, mo - 1, d, h, mi);
+    const fmt = new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const wall = (ms: number) => {
+      const p = Object.fromEntries(fmt.formatToParts(new Date(ms)).map((x) => [x.type, x.value]));
+      return Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute);
+    };
+    let ms = asUtc - (wall(asUtc) - asUtc);
+    ms = asUtc - (wall(ms) - ms); // second pass settles the offset right at a DST edge
+    return new Date(ms).toISOString();
+  } catch {
+    return null;
+  }
+}
+
 async function executeToolWithRetry(
   name: string,
   input: Record<string, any>,
@@ -773,8 +854,10 @@ async function executeToolWithRetry(
   guestEmails: string[] = [],
   slotHosts: Map<string, BookingHost> = new Map(),
   hadSorenHold = false,
+  displacements: Map<string, DisplacedHold[]> = new Map(),
 ): Promise<{ data?: any; specialAction?: AgentResult }> {
   try {
+    if (attempt === 0) console.log(`[agent] tool ${name} input=${JSON.stringify(input).slice(0, 300)}`);
     if (name === 'get_available_times') {
       const tz = (input.timezone as string) || 'America/New_York';
       const senderHost = getBookingHost(payload.email_account);
@@ -854,7 +937,11 @@ async function executeToolWithRetry(
       // Otherwise pick 2 spread-apart slots.
       let picked: Array<{ startTime: string }>;
       let requestedAvailable = false;
-      const requestedTime = input.requested_time as string | undefined;
+      const localRequested = typeof input.requested_local_time === 'string' ? localToUtcIso(input.requested_local_time, tz) : null;
+      const requestedTime = (localRequested ?? (input.requested_time as string | undefined)) || undefined;
+      if (localRequested && input.requested_time && localRequested !== new Date(input.requested_time).toISOString()) {
+        console.log(`[agent] requested_local_time ${input.requested_local_time} (${tz}) -> ${localRequested} overrides the model's own UTC conversion ${input.requested_time}`);
+      }
 
       if (requestedTime) {
         const reqMs = new Date(requestedTime).getTime();
@@ -881,6 +968,29 @@ async function executeToolWithRetry(
               booking_host: host,
               instruction:
                 'This exact time is ALREADY BOOKED on the calendar for this prospect, it is their own meeting, which is why it no longer shows as open. Do NOT say it is unavailable, do NOT offer other times, and do NOT call book_meeting (it would double-book). Just confirm warmly that they are all set for this time, using its "natural" phrasing, and mention the calendar invite already has the details.',
+            },
+          };
+        }
+        const overrideHolds =
+          !exact && !ownBooking && envOptional('GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON')
+            ? await findOverridableHolds(requestedTime, host === 'soren' ? SOREN_EMAIL : undefined, payload.lead_email, slots)
+            : null;
+        if (overrideHolds) {
+          console.log(`[agent] requested time ${requestedTime} is held only by other leads' unconfirmed holds (${overrideHolds.map((h) => h.leadEmail).join(', ')}) — overriding for ${payload.lead_email}`);
+          displacements.set(requestedTime, overrideHolds);
+          slotHosts.set(requestedTime, host);
+          return {
+            data: {
+              requested_time_available: true,
+              displaces_hold: true,
+              suggested_times: [{
+                startTime: requestedTime,
+                formatted: formatter.format(new Date(requestedTime)),
+                natural: naturalTimePhrase(requestedTime, new Date(), tz),
+              }],
+              booking_host: host,
+              instruction:
+                'This exact time was only tentatively held for someone else (an offer they have not accepted), and it is being given to THIS prospect instead. Treat it as available: confirm it warmly and call book_meeting for it. In your confirmation, say casually and warmly that you "moved a few things around" so their time works (for example "I moved a few things around so that time works. Just sent you an invite."). Keep that idiom; vary the rest of the sentence so it never sounds scripted. Never mention another prospect, a hold, or that anyone lost the slot.',
             },
           };
         }
@@ -961,6 +1071,7 @@ async function executeToolWithRetry(
             leadName,
             campaignId: payload.campaign_id,
             label: 'proposed',
+            timezone: tz,
             calendarEmail: host === 'soren' ? SOREN_EMAIL : undefined,
           });
         }
@@ -1097,6 +1208,7 @@ async function executeToolWithRetry(
           leadName: input.name || [payload.firstName, payload.lastName].filter(Boolean).join(' '),
           campaignId: payload.campaign_id,
           label: 'confirmed, awaiting send',
+          timezone: input.timezone,
           calendarEmail: host === 'soren' ? SOREN_EMAIL : undefined,
         });
       }
@@ -1149,7 +1261,7 @@ async function executeToolWithRetry(
     console.error(`[agent] tool ${name} failed (attempt ${attempt}):`, msg);
     if (attempt < 2) {
       await sleep(500 * Math.pow(2, attempt));
-      return executeToolWithRetry(name, input, payload, attempt + 1, mocks, guestEmails, slotHosts, hadSorenHold);
+      return executeToolWithRetry(name, input, payload, attempt + 1, mocks, guestEmails, slotHosts, hadSorenHold, displacements);
     }
     return { data: { error: msg } };
   }
@@ -1178,6 +1290,9 @@ export async function runAgent(
   // router.ts before it clears stale holds — lets the model ground a bare-name confirmation
   // ("Tuesday works") in the exact time it actually offered instead of recomputing it.
   previousOfferedTimes: Array<{ startTime: string; host: BookingHost }> = [],
+  // Slots offered to this lead earlier and since given to someone else (iso strings) — see
+  // buildReleasedSlotsBlock.
+  releasedSlots: string[] = [],
 ): Promise<AgentResult> {
   const client = new Anthropic({ apiKey: env('ANTHROPIC_API_KEY') });
 
@@ -1199,6 +1314,10 @@ export async function runAgent(
   // Tracks which calendar (Katie's or Soren's) each offered slot belongs to, populated by
   // get_available_times and read by book_meeting later in the same run.
   const slotHosts = new Map<string, BookingHost>();
+  // Other leads' unconfirmed holds that a requested time is overriding, keyed by that time's ISO
+  // string; read when book_meeting succeeds so the pending booking carries them (the model
+  // itself never sees who they are).
+  const displacements = new Map<string, DisplacedHold[]>();
   // Seed with real hold data so book_meeting's existing exact/tolerance-match lookup works
   // even if the model uses the exact iso_utc value straight from the prompt block below
   // rather than calling get_available_times again first.
@@ -1210,7 +1329,7 @@ export async function runAgent(
     const response = await client.messages.create({
       model: MODEL,
       max_tokens: 2048,
-      system: buildSystemPrompt(payload, previousOfferedTimes),
+      system: buildSystemPrompt(payload, previousOfferedTimes, releasedSlots),
       tools: TOOLS,
       messages,
     });
@@ -1295,7 +1414,7 @@ export async function runAgent(
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
 
       for (const block of toolUseBlocks) {
-        const result = await executeToolWithRetry(block.name, block.input as Record<string, any>, payload, 0, mocks, guestEmails, slotHosts, hadSorenHold);
+        const result = await executeToolWithRetry(block.name, block.input as Record<string, any>, payload, 0, mocks, guestEmails, slotHosts, hadSorenHold, displacements);
 
         if (result.specialAction) {
           // Carry pendingBooking through even on escalate/hard_no/ooo — if the model had
@@ -1306,6 +1425,8 @@ export async function runAgent(
         }
 
         if (block.name === 'book_meeting' && result.data?.success) {
+          const bookedMs = new Date(result.data.startTime).getTime();
+          const displaces = [...displacements.entries()].find(([iso]) => Math.abs(new Date(iso).getTime() - bookedMs) < 60 * 1000)?.[1];
           pendingBooking = {
             startTime: result.data.startTime,
             name: result.data.name,
@@ -1313,6 +1434,7 @@ export async function runAgent(
             timezone: result.data.timezone,
             guests: result.data.guests_added ?? [],
             host: result.data.host,
+            ...(displaces && displaces.length ? { displaces } : {}),
           };
         }
 

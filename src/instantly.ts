@@ -135,6 +135,86 @@ export async function recordAgentSend(campaign_id: string, lead_email: string): 
   }
 }
 
+export interface LeadEmail {
+  id: string;
+  t: number; // epoch seconds
+  ue: number; // 1 = campaign sequence step, 2 = received, 3 = manual/API reply
+  from: string;
+  eaccount: string;
+  subject: string;
+  prev: string;
+}
+
+// A lead's emails across all campaigns, newest first (Instantly returns them that way).
+export async function listLeadEmails(lead_email: string, limit = 30): Promise<LeadEmail[]> {
+  const res = await instantlyRequest<{ items?: any[] }>({ method: 'GET', url: '/emails', params: { lead: lead_email, limit } });
+  return (res.items ?? []).map((e: any) => ({
+    id: e.id,
+    t: new Date(e.timestamp_email).getTime() / 1000,
+    ue: e.ue_type as number,
+    from: String(e.from_address_email ?? '').toLowerCase(),
+    eaccount: String(e.eaccount ?? ''),
+    subject: String(e.subject ?? ''),
+    prev: String(e.content_preview ?? '').replace(/\s+/g, ' ').trim().slice(0, 140),
+  }));
+}
+
+// The lead's most recent message to us — what a proactive email to them replies to (Instantly
+// needs a real email id in the thread plus the sending account that owns it).
+export async function findLatestInbound(lead_email: string): Promise<LeadEmail | null> {
+  const emails = await listLeadEmails(lead_email);
+  return emails.filter((e) => e.ue === 2 && e.from === lead_email.toLowerCase()).sort((a, b) => b.t - a.t)[0] ?? null;
+}
+
+// Slots that were offered to a lead and then given to someone else, kept on their lead record
+// ("iso|epochReleased", comma-separated, 14 days) so that if they later accept the old time the
+// agent can tell them it's gone instead of treating it as still open. Same custom-variable
+// technique as the send records above.
+const RELEASED_SLOTS_VAR = 'released_slots';
+const RELEASED_SLOT_KEEP_SECONDS = 14 * 24 * 3600;
+
+function parseReleased(raw: unknown): Array<{ iso: string; at: number }> {
+  return String(raw ?? '')
+    .split(',')
+    .map((s) => s.split('|'))
+    .filter((p) => p[0] && Number.isFinite(Number(p[1])))
+    .map((p) => ({ iso: p[0], at: Number(p[1]) }));
+}
+
+export async function markSlotReleased(campaign_id: string, lead_email: string, startIso: string): Promise<void> {
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const id = await findLeadIdByEmail(campaign_id, lead_email);
+    if (!id) return;
+    const lead = await instantlyRequest<{ payload?: Record<string, string> }>({ method: 'GET', url: `/leads/${id}` });
+    const kept = parseReleased(lead.payload?.[RELEASED_SLOTS_VAR]).filter((r) => r.at >= now - RELEASED_SLOT_KEEP_SECONDS);
+    kept.push({ iso: startIso, at: now });
+    await instantlyRequest({
+      method: 'PATCH',
+      url: `/leads/${id}`,
+      data: { custom_variables: { [RELEASED_SLOTS_VAR]: kept.slice(-5).map((r) => `${r.iso}|${r.at}`).join(',') } },
+    });
+  } catch (err) {
+    console.warn('[instantly] markSlotReleased failed:', err instanceof Error ? err.message : String(err));
+  }
+}
+
+// Fails open ([]): a lookup problem just means the agent behaves as it did before.
+export async function getReleasedSlots(campaign_id: string, lead_email: string): Promise<string[]> {
+  try {
+    const now = Math.floor(Date.now() / 1000);
+    const id = await findLeadIdByEmail(campaign_id, lead_email);
+    if (!id) return [];
+    const lead = await instantlyRequest<{ payload?: Record<string, string> }>({ method: 'GET', url: `/leads/${id}` });
+    return parseReleased(lead.payload?.[RELEASED_SLOTS_VAR])
+      .filter((r) => r.at >= now - RELEASED_SLOT_KEEP_SECONDS)
+      .map((r) => r.iso);
+  } catch (err) {
+    console.warn('[instantly] getReleasedSlots failed:', err instanceof Error ? err.message : String(err));
+    return [];
+  }
+}
+
 export interface HumanReply {
   sentAt: number; // epoch seconds
   minutesAgo: number;

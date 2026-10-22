@@ -1,9 +1,10 @@
 import { runAgent, AgentResult, computeGuestEmails, getBookingHost, BookingHost, classifyAudience } from './agent';
-import { replyToEmail, fetchEmailThread, checkAndMarkEmailProcessed, findRecentHumanReply } from './instantly';
+import { replyToEmail, fetchEmailThread, checkAndMarkEmailProcessed, findRecentHumanReply, getReleasedSlots } from './instantly';
 import { bookMeeting } from './calendly';
 import { bookSorenMeeting } from './sorenBooking';
 import { deleteHoldsForLead, hasExistingHold, getHoldsForLead } from './googleCalendar';
-import { envOptional, isAutoSendEnabled, isSorenBookingEnabled, SOREN_EMAIL } from './env';
+import { envOptional, isAutoSendEnabled, isNewRuleAutoSendEnabled, isSorenBookingEnabled, SOREN_EMAIL } from './env';
+import { releaseDisplacedHolds, restoreDisplacedHolds, notifyDisplacedLeads } from './displacement';
 import { routeTeacherReply } from './teacherAgent';
 import { renderLinks } from './linkFormat';
 import {
@@ -22,6 +23,7 @@ import { InstantlyWebhookPayload } from './types';
 // booking as conflicting with our own placeholder (see api/slack-action.ts for the same
 // fix on the human-click path).
 async function autoSendDraft(payload: InstantlyWebhookPayload, result: AgentResult): Promise<void> {
+  let releasedDisplaced: Awaited<ReturnType<typeof releaseDisplacedHolds>>['released'] = [];
   if (result.pendingBooking) {
     if (envOptional('GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON')) {
       try {
@@ -29,6 +31,20 @@ async function autoSendDraft(payload: InstantlyWebhookPayload, result: AgentResu
       } catch (err) {
         console.warn('[router] autoSendDraft: deleteHoldsForLead failed:', err instanceof Error ? err.message : String(err));
       }
+    }
+    // This booking takes a slot another lead was only tentatively offered: release their hold
+    // first (Calendly would reject the booking over it), put it back if the booking fails.
+    if (result.pendingBooking.displaces?.length) {
+      const d = await releaseDisplacedHolds(result.pendingBooking.displaces);
+      if (d.blockedReason) {
+        await postEscalateNotification(
+          payload,
+          { classification: 'ESCALATE', confidence: 0, reasoning: `Auto-send: couldn't take the requested slot, ${d.blockedReason}. Handle manually.`, extractedInfo: {} },
+          result.draft,
+        );
+        return;
+      }
+      releasedDisplaced = d.released;
     }
     try {
       if (result.pendingBooking.host === 'soren') {
@@ -57,6 +73,7 @@ async function autoSendDraft(payload: InstantlyWebhookPayload, result: AgentResu
     } catch (err) {
       // Slot may no longer be available — do NOT send the confirmation. Escalate with
       // the drafted text still attached so a human can pick up from here.
+      if (releasedDisplaced.length) await restoreDisplacedHolds(releasedDisplaced);
       await postEscalateNotification(
         payload,
         {
@@ -88,6 +105,7 @@ async function autoSendDraft(payload: InstantlyWebhookPayload, result: AgentResu
   }
 
   await postAutoSentNotification(payload, result);
+  if (releasedDisplaced.length) await notifyDisplacedLeads(releasedDisplaced, payload.lead_email);
 }
 
 export async function routeReply(payload: InstantlyWebhookPayload): Promise<void> {
@@ -160,9 +178,12 @@ export async function routeReply(payload: InstantlyWebhookPayload): Promise<void
   const thread = await fetchEmailThread(payload.campaign_id, payload.lead_email);
   console.log(`[router] thread emails fetched: ${thread.length}`);
 
+  // Times offered to this lead earlier that have since been given to someone else.
+  const releasedSlots = await getReleasedSlots(payload.campaign_id, payload.lead_email);
+
   let result;
   try {
-    result = await runAgent(payload, thread, {}, hadSorenHold, previousOfferedTimes);
+    result = await runAgent(payload, thread, {}, hadSorenHold, previousOfferedTimes, releasedSlots);
   } catch (err) {
     console.error('[router] agent threw:', err instanceof Error ? err.stack : String(err));
     try {
@@ -277,6 +298,25 @@ export async function routeReply(payload: InstantlyWebhookPayload): Promise<void
           return;
         }
         if (isAutoSendEnabled()) {
+          // New-rule emails wait for a human until they've been watched working: a booking that
+          // takes a slot held for another lead, and any reply to a lead whose offered time was
+          // given away (they may be accepting a time that's gone). One switch lifts this:
+          // NEW_RULE_EMAILS_AUTO_SEND_ENABLED.
+          const newRuleReason = result.pendingBooking?.displaces?.length
+            ? 'Slot override: this booking takes a time that was only tentatively held for another lead (they will be told after you Send).'
+            : releasedSlots.length
+              ? 'This lead was previously offered a time that has since been given to someone else. Check the reply handles that right (taken slot, different time, calendar link).'
+              : '';
+          if (newRuleReason && !isNewRuleAutoSendEnabled()) {
+            await postEscalateNotification(
+              payload,
+              { classification: 'ESCALATE', confidence: 0, reasoning: newRuleReason, extractedInfo: {} },
+              result.draft,
+              result.ccEmails,
+              result.pendingBooking,
+            );
+            return;
+          }
           // If a teammate has been writing to this lead by hand, don't auto-send over them:
           // hold the draft for one-click review instead (same card as any escalation, draft
           // attached). The agent can't know a human is mid-conversation, and in real

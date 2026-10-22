@@ -8,6 +8,7 @@ import { bookSorenMeeting } from '../src/sorenBooking';
 import { deleteHoldsForLead, updateEventReminderStatus } from '../src/googleCalendar';
 import { renderLinks } from '../src/linkFormat';
 import { updateViaResponseUrl } from '../src/slack';
+import { releaseDisplacedHolds, restoreDisplacedHolds, notifyDisplacedLeads } from '../src/displacement';
 import { SendReplyButtonValue, SlackActionPayload } from '../src/types';
 
 // A human decided what happens with this lead — clear any tentative calendar holds from
@@ -176,6 +177,21 @@ async function processAction(
         // unavailable (it thinks the slot is already taken, by us). Clearing it first lets
         // the real booking go through, which then re-occupies the slot as an actual meeting.
         await releaseHolds(parsed.lead_email, parsed.campaign_id);
+        // If this booking takes a slot another lead was only tentatively offered, release their
+        // hold too (same reason: Calendly would reject the booking over it). Refuses if that
+        // lead confirmed the time while this card sat in review.
+        let releasedDisplaced: Awaited<ReturnType<typeof releaseDisplacedHolds>>['released'] = [];
+        if (parsed.booking.displaces?.length) {
+          const d = await releaseDisplacedHolds(parsed.booking.displaces);
+          if (d.blockedReason) {
+            await updateViaResponseUrl(
+              payload.response_url,
+              `:warning: Could not give this lead the requested time: ${d.blockedReason}. Reply NOT sent — please handle manually in Unibox.`,
+            );
+            return;
+          }
+          releasedDisplaced = d.released;
+        }
         try {
           if (parsed.booking.host === 'soren') {
             await bookSorenMeeting({
@@ -200,8 +216,11 @@ async function processAction(
             });
           }
           console.log('[slack-action] booked on send:', parsed.booking.startTime, `host=${parsed.booking.host}`, 'guests:', parsed.booking.guests.join(', ') || 'none');
+          // The slot is now really this lead's: tell whoever it was offered to before.
+          if (releasedDisplaced.length) await notifyDisplacedLeads(releasedDisplaced, parsed.booking.name || parsed.lead_email);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
+          if (releasedDisplaced.length) await restoreDisplacedHolds(releasedDisplaced);
           await updateViaResponseUrl(
             payload.response_url,
             `:warning: Could not book the meeting (\`${msg}\`). The slot may no longer be available. Reply NOT sent — please handle manually in Unibox.`,

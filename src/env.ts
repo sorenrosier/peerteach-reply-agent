@@ -28,6 +28,7 @@ const OPTIONAL_VARS = [
   'AUTO_SEND_ENABLED',
   'SOREN_BOOKING_ENABLED',
   'REMINDER_AUTO_SEND_ENABLED',
+  'NEW_RULE_EMAILS_AUTO_SEND_ENABLED',
 ] as const;
 
 // Soren's own calendar is booked directly via Google Calendar (no separate Calendly
@@ -116,4 +117,13 @@ export function isSorenBookingEnabled(): boolean {
 // be checked by a human before trusting the pipeline. Flip to 'true' once validated.
 export function isReminderAutoSendEnabled(): boolean {
   return process.env.REMINDER_AUTO_SEND_ENABLED === 'true';
+}
+
+// The emails produced by the slot-override and follow-up rules (a booking that takes a slot
+// held for someone else, the notice to the lead who lost it, a late reply from that lead, and
+// the 24-hour follow-up) go to Slack for a human to approve rather than sending on their own,
+// until they've been watched working. Flip to 'true' (plus a redeploy) to let them send
+// automatically; nothing else needs to change.
+export function isNewRuleAutoSendEnabled(): boolean {
+  return process.env.NEW_RULE_EMAILS_AUTO_SEND_ENABLED === 'true';
 }

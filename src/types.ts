@@ -11,6 +11,21 @@ export type ReplyClassification =
 
 export type AgentAction = 'draft' | 'no_reply' | 'hard_no' | 'ooo' | 'escalate';
 
+// Another lead's tentative "proposed" hold sitting on a slot that a different lead has now
+// asked for. Carried on the pending booking so that when a human approves it, the hold is
+// released first and that other lead is told their time went elsewhere.
+export interface DisplacedHold {
+  eventId: string;
+  calendarEmail?: string; // undefined = Katie's calendar
+  leadEmail: string;
+  leadName: string;
+  campaignId: string;
+  label: string;
+  timezone?: string;
+  startIso: string;
+  endIso: string;
+}
+
 export interface AgentResult {
   action: AgentAction;
   draft?: string;
@@ -22,6 +37,7 @@ export interface AgentResult {
     timezone: string;
     guests: string[];
     host: 'katie' | 'soren';
+    displaces?: DisplacedHold[];
   };
   // Everyone else on the thread (colleagues looped in via to/cc) who should be cc'd if
   // this draft is sent. Computed in code from thread data, not left to the model.
@@ -103,6 +119,7 @@ export interface SendReplyButtonValue {
     timezone: string;
     guests: string[];
     host: 'katie' | 'soren';
+    displaces?: DisplacedHold[];
   };
   // Present only for demo-reminder cards — the calendar event this reminder is for, so the
   // Send/Skip handlers can mark it (reminder_status extended property) and never re-send or

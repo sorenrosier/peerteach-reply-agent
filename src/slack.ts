@@ -274,6 +274,13 @@ export async function postEscalateNotification(
       });
     }
 
+    if (pendingBooking?.displaces?.length) {
+      blocks.push({
+        type: 'context',
+        elements: [{ type: 'mrkdwn', text: `:arrows_counterclockwise: *Takes this time from:* ${pendingBooking.displaces.map((d) => d.leadName || d.leadEmail).join(', ')} (an offer they hadn't accepted). They get a separate approval card to be told after you Send.` }],
+      });
+    }
+
     if (ccEmails && ccEmails.length) {
       blocks.push({
         type: 'context',
@@ -626,6 +633,57 @@ export async function postReminderApproval(params: {
   ];
 
   await postMessage(blocks, `Demo reminder for ${params.leadEmail} at ${formatBookingTime(params.startTimeIso, params.timezone)}`);
+}
+
+// A proactive email (one nobody just replied to) that needs a human's OK before it goes: the
+// notice to a lead whose offered time was given to someone else, and the 24-hour follow-up.
+// Same Send/Skip mechanics as the demo-reminder card. Skip carries no lead/campaign on
+// purpose: the Skip handler releases a lead's calendar holds when it sees them, and skipping
+// one of these must not touch a hold.
+export async function postProactiveApproval(params: {
+  header: string; // e.g. ":bell: Slot reassigned — notify lead (needs approval)"
+  why: string; // one line: what happened and why this email exists
+  name: string;
+  leadEmail: string;
+  campaignId: string;
+  eaccount: string;
+  emailId: string;
+  subject: string;
+  draftText: string;
+}): Promise<void> {
+  const buttonValue: SendReplyButtonValue = {
+    email_id: params.emailId,
+    eaccount: params.eaccount,
+    subject: params.subject,
+    body_text: params.draftText,
+    lead_email: params.leadEmail,
+    campaign_id: params.campaignId,
+  };
+  const valueStr = JSON.stringify(buttonValue);
+  let finalValue = valueStr;
+  if (valueStr.length > 1900) {
+    const overhead = valueStr.length - buttonValue.body_text.length;
+    finalValue = JSON.stringify({ ...buttonValue, body_text: buttonValue.body_text.slice(0, Math.max(0, 1900 - overhead - 20)) });
+  }
+  const blocks: any[] = [
+    { type: 'header', text: { type: 'plain_text', text: params.header, emoji: true } },
+    { type: 'section', text: { type: 'mrkdwn', text: `*${params.name}* — <mailto:${params.leadEmail}|${params.leadEmail}>\n${params.why}` } },
+    { type: 'section', text: { type: 'mrkdwn', text: `*Draft:*\n${quoteBlock(renderLinks(params.draftText).slackMrkdwn, 2000)}` } },
+    {
+      type: 'actions',
+      elements: [
+        { type: 'button', style: 'primary', text: { type: 'plain_text', text: ':white_check_mark: Send', emoji: true }, action_id: 'send_reply', value: finalValue },
+        { type: 'button', style: 'danger', text: { type: 'plain_text', text: ':x: Skip', emoji: true }, action_id: 'skip', value: JSON.stringify({ proactive: true }) },
+      ],
+    },
+  ];
+  await postMessage(blocks, `${params.header}: ${params.leadEmail}`);
+}
+
+// A plain heads-up in the channel (no buttons): something happened that a person should know
+// about or do by hand.
+export async function postInfoNote(text: string): Promise<void> {
+  await postMessage([{ type: 'section', text: { type: 'mrkdwn', text } }], text.slice(0, 150));
 }
 
 // Update an existing message via response_url (used by slack-action handler).

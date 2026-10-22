@@ -140,6 +140,9 @@ export async function createHold(params: {
   campaignId: string;
   label: string; // e.g. "proposed" or "confirmed, awaiting send"
   calendarEmail?: string; // defaults to Katie's calendar
+  // The prospect's own timezone, kept so a later message about this slot (e.g. telling them
+  // it was given to someone else) can name the time in THEIR clock, not ours.
+  timezone?: string;
 }): Promise<string | null> {
   try {
     const token = await getAccessToken(params.calendarEmail);
@@ -161,6 +164,8 @@ export async function createHold(params: {
             lead_email: params.leadEmail,
             lead_name: params.leadName || '',
             campaign_id: params.campaignId,
+            label: params.label,
+            ...(params.timezone ? { timezone: params.timezone } : {}),
             created_at: new Date().toISOString(),
           },
         },
@@ -358,6 +363,153 @@ export async function findLeadBookingAt(
   } catch (err) {
     console.warn(`[googleCalendar] findLeadBookingAt(${leadEmail}) failed, assuming none:`, err instanceof Error ? err.message : String(err));
     return null;
+  }
+}
+
+// ─── Hold inspection / override helpers ───────────────────────────────────────
+
+export interface HoldInfo {
+  eventId: string;
+  calendarEmail?: string; // undefined = Katie's calendar
+  leadEmail: string;
+  leadName: string;
+  campaignId: string;
+  label: string; // "proposed" (offered, nobody accepted) or "confirmed, awaiting send"
+  timezone?: string;
+  startIso: string;
+  endIso: string;
+  createdAt?: string;
+  followupStatus?: string;
+}
+
+function holdFromEvent(e: any, calendarEmail?: string): HoldInfo {
+  const p = e.extendedProperties?.private ?? {};
+  // Older holds predate the `label` property; the label is the last segment of the summary.
+  const summaryLabel = typeof e.summary === 'string' ? (e.summary.split(' — ').pop() ?? '') : '';
+  return {
+    eventId: e.id,
+    calendarEmail,
+    leadEmail: p.lead_email ?? '',
+    leadName: p.lead_name ?? '',
+    campaignId: p.campaign_id ?? '',
+    label: p.label || summaryLabel,
+    timezone: p.timezone || undefined,
+    startIso: new Date(e.start.dateTime).toISOString(),
+    endIso: new Date(e.end.dateTime).toISOString(),
+    createdAt: p.created_at,
+    followupStatus: p.followup_status || undefined,
+  };
+}
+
+// What is sitting on this calendar over a proposed slot: our own tentative holds, and whether
+// anything REAL (an actual meeting, a manual block) also overlaps it. Used to decide whether
+// a time that looks "taken" is blocked only by holds we created ourselves. Narrow +/-1h query
+// with no property filter, so unaffected by the wide-window quirk (see deleteExpiredHolds).
+// Returns null on error — callers then behave exactly as before.
+export async function findSlotConflicts(
+  startIso: string,
+  endIso: string,
+  calendarEmail?: string,
+): Promise<{ holds: HoldInfo[]; realConflict: boolean } | null> {
+  try {
+    const token = await getAccessToken(calendarEmail);
+    const s = new Date(startIso).getTime();
+    const e = new Date(endIso).getTime();
+    const res = await axios.get('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { timeMin: new Date(s - 3600000).toISOString(), timeMax: new Date(e + 3600000).toISOString(), singleEvents: true, maxResults: 50 },
+      timeout: 10000,
+    });
+    const holds: HoldInfo[] = [];
+    let realConflict = false;
+    for (const ev of (res.data.items ?? []) as any[]) {
+      if (ev.status === 'cancelled' || !ev.start?.dateTime || !ev.end?.dateTime) continue;
+      const evS = new Date(ev.start.dateTime).getTime();
+      const evE = new Date(ev.end.dateTime).getTime();
+      if (!(evS < e && evE > s)) continue; // doesn't overlap
+      if (ev.extendedProperties?.private?.peerteach_hold) holds.push(holdFromEvent(ev, calendarEmail));
+      else if (ev.transparency !== 'transparent') realConflict = true;
+    }
+    return { holds, realConflict };
+  } catch (err) {
+    console.warn('[googleCalendar] findSlotConflicts failed:', err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
+// Re-reads one hold; null if it's gone or cancelled (e.g. its lead replied and the hold was
+// cleared since it was captured).
+export async function getHoldInfo(eventId: string, calendarEmail?: string): Promise<HoldInfo | null> {
+  try {
+    const token = await getAccessToken(calendarEmail);
+    const res = await axios.get(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 10000,
+    });
+    const ev = res.data;
+    if (ev.status === 'cancelled' || !ev.extendedProperties?.private?.peerteach_hold || !ev.start?.dateTime) return null;
+    return holdFromEvent(ev, calendarEmail);
+  } catch (err: any) {
+    if (err?.response?.status === 404 || err?.response?.status === 410) return null;
+    throw err;
+  }
+}
+
+export async function deleteHoldById(eventId: string, calendarEmail?: string): Promise<void> {
+  const token = await getAccessToken(calendarEmail);
+  try {
+    await axios.delete(`https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      timeout: 10000,
+    });
+  } catch (err: any) {
+    if (err?.response?.status === 404 || err?.response?.status === 410) return; // already gone
+    throw err;
+  }
+}
+
+// Tentative offers that have been outstanding long enough to be worth a follow-up: "proposed"
+// holds (a time was offered, nobody accepted) between minAgeHours and maxAgeHours old. A
+// hold only survives while the lead hasn't replied (a new reply clears it) and hasn't booked,
+// so the holds themselves are the index of offers still awaiting an answer — no separate
+// store. +/-14 day window with the property filter, same reliable range as deleteExpiredHolds.
+export async function listProposedHolds(minAgeHours: number, maxAgeHours: number, calendarEmail?: string): Promise<HoldInfo[]> {
+  const token = await getAccessToken(calendarEmail);
+  const res = await axios.get('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+    headers: { Authorization: `Bearer ${token}` },
+    params: {
+      privateExtendedProperty: 'peerteach_hold=true',
+      timeMin: new Date(Date.now() - 14 * 86400000).toISOString(),
+      timeMax: new Date(Date.now() + 14 * 86400000).toISOString(),
+      singleEvents: true,
+      maxResults: 250,
+    },
+    timeout: 15000,
+  });
+  const out: HoldInfo[] = [];
+  for (const ev of (res.data.items ?? []) as any[]) {
+    if (ev.status === 'cancelled' || !ev.start?.dateTime) continue;
+    if (Array.isArray(ev.attendees) && ev.attendees.length > 0) continue; // a human made it a real meeting
+    const h = holdFromEvent(ev, calendarEmail);
+    if (!/^proposed/i.test(h.label) || !h.leadEmail) continue;
+    const ageH = (Date.now() - new Date(h.createdAt || ev.created).getTime()) / 3600000;
+    if (ageH >= minAgeHours && ageH <= maxAgeHours) out.push(h);
+  }
+  return out;
+}
+
+// Marks a hold's follow-up as queued/sent/skipped so a later cron tick never repeats it (a
+// Calendar PATCH merges extendedProperties.private, same pattern as reminder_status).
+export async function markHoldFollowUp(eventId: string, status: 'queued' | 'sent' | 'skipped', calendarEmail?: string): Promise<void> {
+  try {
+    const token = await getAccessToken(calendarEmail);
+    await axios.patch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events/${eventId}`,
+      { extendedProperties: { private: { followup_status: status } } },
+      { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 },
+    );
+  } catch (err) {
+    console.warn(`[googleCalendar] markHoldFollowUp(${eventId}, ${status}) failed:`, err instanceof Error ? err.message : String(err));
   }
 }
 
