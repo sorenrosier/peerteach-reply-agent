@@ -61,11 +61,13 @@ export async function runFollowUps(opts: { dryRun?: boolean } = {}): Promise<Fol
         if (outcome === 'queued') result.queued++; else if (outcome === 'skipped') result.skipped++;
         continue;
       }
-      await markHoldFollowUp(h.eventId, outcome === 'sent' ? 'sent' : outcome === 'queued' ? 'queued' : 'skipped');
+      // 'not-yet' (offer under 24h old, or not actually sent yet) must stay untagged so a later
+      // tick looks again; tagging it would quietly cancel its follow-up forever.
+      if (outcome === 'not-yet') continue;
+      await markHoldFollowUp(h.eventId, outcome);
       if (outcome === 'sent') result.sent++;
       else if (outcome === 'queued') result.queued++;
-      else if (outcome === 'skipped') result.skipped++;
-      // 'not-yet' leaves the hold untagged so a later tick looks again
+      else result.skipped++;
     } catch (err) {
       console.warn(`[followups] ${h.leadEmail} failed (will retry next tick):`, err instanceof Error ? err.message : String(err));
     }

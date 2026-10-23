@@ -146,7 +146,7 @@ export default async function handler(
   res.status(200).end();
 }
 
-async function processAction(
+export async function processAction(
   action: SlackActionPayload['actions'][number],
   payload: SlackActionPayload,
 ): Promise<void> {

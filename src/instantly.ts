@@ -206,8 +206,9 @@ export async function getReleasedSlots(campaign_id: string, lead_email: string):
     const id = await findLeadIdByEmail(campaign_id, lead_email);
     if (!id) return [];
     const lead = await instantlyRequest<{ payload?: Record<string, string> }>({ method: 'GET', url: `/leads/${id}` });
+    // A slot that has already come and gone is no longer something they could be accepting.
     return parseReleased(lead.payload?.[RELEASED_SLOTS_VAR])
-      .filter((r) => r.at >= now - RELEASED_SLOT_KEEP_SECONDS)
+      .filter((r) => r.at >= now - RELEASED_SLOT_KEEP_SECONDS && new Date(r.iso).getTime() / 1000 > now - 24 * 3600)
       .map((r) => r.iso);
   } catch (err) {
     console.warn('[instantly] getReleasedSlots failed:', err instanceof Error ? err.message : String(err));
