@@ -1,7 +1,7 @@
 import { listProposedHolds, markHoldFollowUp, hasRealBookingForLead, HoldInfo } from './googleCalendar';
 import { listLeadEmails, findLeadByEmailAnyCampaign, replyToEmail } from './instantly';
 import { getSenderIdentity } from './agent';
-import { CALENDLY_SCHEDULING_URL, isNewRuleAutoSendEnabled } from './env';
+import { CALENDLY_SCHEDULING_URL, isAutoSendEnabled } from './env';
 import { postProactiveApproval, postInfoNote, replySubject } from './slack';
 import { renderLinks } from './linkFormat';
 
@@ -40,8 +40,10 @@ export interface FollowUpResult {
 // the "proposed" holds that are still on the calendar: a new reply clears them and so does a
 // booking, so a surviving hold means the lead hasn't responded. Each candidate is then
 // re-checked against Instantly (the offer really went out, nothing was sent or received since,
-// the lead is still open) and the hold is tagged so no later tick repeats it. The email goes to
-// Slack for approval unless NEW_RULE_EMAILS_AUTO_SEND_ENABLED is on.
+// the lead is still open) and the hold is tagged so no later tick repeats it. The follow-up is
+// sent automatically (the team confirmed these work); a short note in Slack records each one.
+// It follows the same AUTO_SEND_ENABLED kill switch as ordinary replies, so turning auto-send
+// off sends follow-ups to Slack for approval again.
 export async function runFollowUps(opts: { dryRun?: boolean } = {}): Promise<FollowUpResult> {
   const result: FollowUpResult = { checked: 0, queued: 0, sent: 0, skipped: 0, ...(opts.dryRun ? { preview: [] } : {}) };
   const holds = await listProposedHolds(FOLLOWUP_AFTER_HOURS, FOLLOWUP_WINDOW_END_HOURS);
@@ -112,7 +114,7 @@ async function followUpFor(h: HoldInfo, previewSink?: string[]): Promise<'sent' 
     return 'queued';
   }
 
-  if (isNewRuleAutoSendEnabled()) {
+  if (isAutoSendEnabled()) {
     const rendered = renderLinks(draft);
     await replyToEmail({
       reply_to_uuid: inbound.id,
@@ -121,7 +123,7 @@ async function followUpFor(h: HoldInfo, previewSink?: string[]): Promise<'sent' 
       body: { text: rendered.plainText, html: rendered.html },
       stamp: { campaignId: h.campaignId, leadEmail: h.leadEmail },
     });
-    await postInfoNote(`:envelope: Sent a 24-hour follow-up to ${h.leadName || h.leadEmail} (<mailto:${h.leadEmail}|${h.leadEmail}>).`);
+    await postInfoNote(`:envelope: Sent a 24-hour follow-up to ${h.leadName || h.leadEmail} (<mailto:${h.leadEmail}|${h.leadEmail}>):\n>${rendered.slackMrkdwn.replace(/\n/g, '\n>')}`);
     return 'sent';
   }
   await postProactiveApproval({
