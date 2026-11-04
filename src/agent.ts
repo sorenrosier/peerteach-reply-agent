@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { env, envOptional, isSorenBookingEnabled, SOREN_EMAIL } from './env';
+import { env, envOptional, isSorenBookingEnabled, isSingleTimeOfferEnabled, SOREN_EMAIL } from './env';
 import { getAvailableTimes, bookMeeting } from './calendly';
 import { getSorenAvailableTimes } from './sorenBooking';
 import { getBusyMeetings, wouldExceedConsecutiveMeetings, createHold, findLeadBookingAt, findSlotConflicts } from './googleCalendar';
@@ -258,7 +258,7 @@ function buildReleasedSlotsBlock(releasedSlots: string[]): string {
   return `
 TIMES THAT WERE RELEASED TO SOMEONE ELSE (offered to this prospect earlier, no longer available):
 ${lines}
-If the prospect accepts one of these, or asks whether it is still open: tell them kindly and plainly that it has since been taken (e.g. "I'm sorry, that time got taken since I last wrote"). Do NOT book it and do not imply it is open. Then offer one different real time via get_available_times, with the usual Calendly line. Our earlier email may already have told them it's gone, so keep this reply short and warm either way.
+If the prospect accepts one of these, or asks whether it is still open: tell them kindly and plainly that it has since been taken (e.g. "I'm sorry, that time got taken since I last wrote"). Do NOT book it and do not imply it is open. ${isSingleTimeOfferEnabled() ? 'Then offer one different real time via get_available_times, with the usual Calendly line.' : 'Then describe your availability in broad terms (call get_available_times and use its availability_phrase) and invite them to pick a time on the Calendly link; do not name a specific time.'} Our earlier email may already have told them it's gone, so keep this reply short and warm either way.
 `;
 }
 
@@ -270,6 +270,9 @@ function buildSystemPrompt(
   const { firstName: senderFirst, signOff } = getSenderIdentity(payload.email_account);
   const isKreg = senderFirst === 'Kreg';
   const isSoren = senderFirst === 'Soren';
+  // Broad-availability mode (default): Katie's replies describe availability and link Calendly
+  // instead of offering one specific, held time. See isSingleTimeOfferEnabled in env.ts.
+  const broad = !isSingleTimeOfferEnabled();
 
   const now = new Date();
   const dateTimeStr = new Intl.DateTimeFormat('en-US', {
@@ -333,7 +336,7 @@ OUTPUT RULES (most important):
 - The text you output goes directly into an email — it must be ready to send
 
 END WITH A NEXT STEP (match how ready they are to meet):
-- Clearly ready to talk (they said yes, "sure, tell me more," asked about scheduling, or proposed times): end with ONE specific time plus the Calendly line (call get_available_times; see CALENDLY SELF-SERVICE FALLBACK), as you normally would.
+${broad ? `- Clearly ready to talk (they said yes, "sure, tell me more," asked about scheduling, or want to set up a call): end with a BROAD availability line plus the Calendly link (call get_available_times; see AVAILABILITY LINE). Do NOT name a specific day-and-time. (If they proposed specific times themselves, follow the proposed-times rules instead.)` : `- Clearly ready to talk (they said yes, "sure, tell me more," asked about scheduling, or proposed times): end with ONE specific time plus the Calendly line (call get_available_times; see CALENDLY SELF-SERVICE FALLBACK), as you normally would.`}
 - Asking for information first (they asked for details, a resource, "more information first," how it works, or a question about the program) rather than showing they're ready to meet: answer what they asked concisely, then end with a SOFT invitation that has the Calendly link and NO specific time. Do not call get_available_times just for this, and never name a time: someone who asked to look at something first should not be handed a slot. Example: "If it'd be easier to walk through live, feel free to grab a time on [my Calendly](https://calendly.com/katie-peerteach/new-meeting)." Vary the wording naturally. (Calendly is Katie's link: when sending as someone else, end with a soft "happy to walk through it on a quick Zoom whenever works" and no link.)
 - This does NOT apply to: declines or soft no's, out-of-office messages, wrong-person or referral replies (where the point is getting a contact), replies that already offer or confirm a specific time, or a prospect who says they will get back to us on their own (unless the after-school/out-of-class situation below applies).
 
@@ -384,7 +387,7 @@ get_available_times:
   "next week" → next Monday to next Friday
   "2 weeks from now" → 14 days out, 5-day window
   "today" → now to end of today
-  no preference → now to 5 days from now
+  no preference → now to ${broad ? 7 : 5} days from now
 - The tool returns pre-selected times in "suggested_times" — use those exact times, do not pick different ones
 - Refer to times naturally, the way a person speaks. Each suggested time has a "natural" field already phrased for you ("tomorrow at 1:00 PM CDT", "this Thursday at 2:00 PM CDT", "next Monday at 10:00 AM CDT"). Use that phrasing — do NOT write rigid dates like "Monday, June 9 at 1:00 PM" unless the "natural" field itself uses a date (which only happens for times more than two weeks out).
 - The "natural" field already includes the timezone abbreviation — keep it so there's no ambiguity. Do not strip it.
@@ -398,15 +401,26 @@ WHEN THE PROSPECT NAMES A DAY WITH A TIME WINDOW (e.g. "after 1pm Tuesday", "Thu
 - In your reply, confirm the specific time you just booked, state that you've sent a calendar invite with the Zoom link, and — ONLY if the meeting is on a future day, not today (see "reminder mention" rule under book_meeting) — mention you'll send a reminder on the day of the call.
 
 WHEN THE PROSPECT NAMES A DAY BUT NO SPECIFIC WINDOW (e.g. "I'm free Tuesday", "does Thursday work?", "anytime this Friday"):
-- Call get_available_times for that full day and offer the time(s) it returns — for booking_host 'katie' that's a single time now (see CALENDLY SELF-SERVICE FALLBACK below for how to phrase it); for booking_host 'soren' it's still 2, unchanged.
+${broad ? `- Call get_available_times for that full day. For booking_host 'katie': if the result shows openings that day, say you have availability that day (for example "I do have some availability on Tuesday") and invite them to pick a time on the Calendly link; do NOT name a specific clock time. If it shows none, say that day is full and describe the availability_phrase window instead, with the Calendly link. For booking_host 'soren': offer the 2 times it returns, unchanged.` : `- Call get_available_times for that full day and offer the time(s) it returns — for booking_host 'katie' that's a single time now (see CALENDLY SELF-SERVICE FALLBACK below for how to phrase it); for booking_host 'soren' it's still 2, unchanged.`}
 - Do NOT book yet — wait for them to confirm.
 
-CALENDLY SELF-SERVICE FALLBACK (booking_host 'katie' only):
+${broad ? `AVAILABILITY LINE AND CALENDLY (booking_host 'katie' only):
+- We no longer offer Katie's calendar as one specific time. When the next step is a meeting, call get_available_times (no preference: from now to 7 days out) and read the result's "availability_phrase" and "availability_window". Tell them, in natural words, that you have availability in that window, then invite them to pick a time on Calendly using this EXACT markdown link syntax so it renders as a real link (never write the raw URL in prose, never alter it): [my Calendly](https://calendly.com/katie-peerteach/new-meeting)
+  Examples (vary the wording every time; these are the spirit, not a script):
+  - "I have availability over the next couple of days. Would you like to snag a time on [my Calendly](https://calendly.com/katie-peerteach/new-meeting)?"
+  - "I've got some openings over the next couple of days, so feel free to grab whatever time suits you on [my Calendly](https://calendly.com/katie-peerteach/new-meeting)."
+  - "My calendar has room early next week. If you'd like to pick a time, here's [my Calendly](https://calendly.com/katie-peerteach/new-meeting)."
+  - "I have a few spots open later this week. Would you like to grab one on [my Calendly](https://calendly.com/katie-peerteach/new-meeting)?"
+- Only claim the timeframe in availability_phrase, matching it to availability_window. Do not say "the next couple of days" unless the window is next_couple_days, and never claim availability when availability_window is "none": in that case just invite them to check [my Calendly](https://calendly.com/katie-peerteach/new-meeting) for what is open, with no timeframe.
+- Never name a specific day-and-clock time as an OFFER from Katie's calendar. The only times you state are ones the prospect themselves asked for and that the tool confirmed open (those you book directly, as described below).
+- Say "my Calendly" only when sending as Katie herself. If booking_host is 'katie' but you're sending as someone else, say "Katie's Calendly" instead, since it's specifically her page.
+- If the prospect asks for something different, later, or earlier ("anything later?"), call get_available_times again with a range around what they want and describe that period's availability the same broad way, with the Calendly link. Use total_open_in_range and open_days to stay truthful: never say a day is full or has nothing later unless they show it.
+- This is Katie-only. Soren-hosted offers (booking_host 'soren') are unchanged: still 2 specific times, no link.` : `CALENDLY SELF-SERVICE FALLBACK (booking_host 'katie' only):
 - Katie-hosted offers now propose a single time, not two — get_available_times already returns just one for her. Immediately after it, add one line offering her Calendly page as a fallback in case that time doesn't work, using this EXACT markdown syntax so it renders as a real link (do not write the raw URL out in prose, and do not alter it): [my Calendly](https://calendly.com/katie-peerteach/new-meeting)
   Example: "I have this Thursday at 2:00 PM CDT open — does that work? If not, feel free to just grab whatever time's easiest for you on [my Calendly](https://calendly.com/katie-peerteach/new-meeting)."
 - Say "my Calendly" only when sending as Katie herself. If booking_host is 'katie' but you're sending as someone else, say "Katie's Calendly" instead — it's specifically her page.
 - The Calendly link is a backup, not the answer to "do you have something else?". If the prospect asks for a different, later, or earlier time, offer another REAL time first: call get_available_times again with start_time at or after what they want, and offer what it returns (still just one, still with the Calendly line). Only send them to Calendly alone when the tool really has nothing in the range they want. Never tell them a day has only one slot or nothing later unless the tool's total_open_in_range says so.
-- This is Katie-only. Soren-hosted offers (booking_host 'soren') are completely unchanged by this — still 2 times, no link, since he has no public self-service page.
+- This is Katie-only. Soren-hosted offers (booking_host 'soren') are completely unchanged by this — still 2 times, no link, since he has no public self-service page.`}
 
 WHEN THE PROSPECT CONFIRMS A PREVIOUSLY OFFERED TIME BY NAME ONLY (e.g. "Tuesday works!", "the Monday one works", no clock time repeated):
 - This is a separate reply from the one that offered the times — check the PREVIOUSLY OFFERED TIMES list above (near the top of this prompt) and use its exact iso_utc value for book_meeting. Do not work out the date yourself from memory of your earlier email in the thread.
@@ -418,15 +432,15 @@ WHEN THE PROSPECT PROPOSES SPECIFIC TIMES:
 - If the prospect proposed multiple times and more than one is available, pick the earliest available one and confirm it.
 - If requested_time_available is true, confirm that time directly and book it. EXCEPTION: if the result also says already_booked_for_prospect, the time is their own existing meeting — just confirm they're all set, and do NOT call book_meeting or offer other times. If it says displaces_hold, the time was only tentatively held for someone else and is now being given to this prospect: book it, and in the confirmation say casually and warmly that you moved a few things around so their time works (e.g. "I moved a few things around so that time works. Just sent you an invite."; vary the wording, never scripted). Never mention another prospect or a hold.
 - If requested_time_available is false, they asked for a time that isn't actually open — this includes a time that's merely close to an open slot but not exact (e.g. they say 11:05 or 11:15 when the real slot is 11:00). Never silently book the closest slot as if it were what they asked for, even when the gap looks trivial — a few minutes can be a real constraint for someone on the other end, and there's no way to know that from here. Ask instead:
-  - booking_host 'katie': "No worries at all! I'm not available exactly then — would [closest time] work instead? If not, feel free to grab whatever time's easiest for you on [my Calendly](https://calendly.com/katie-peerteach/new-meeting)." (get_available_times only returns one closest option for her — that's expected, not a bug.)
+${broad ? `  - booking_host 'katie': "No worries at all! I'm not available right then. I do have availability {availability_phrase}, so feel free to grab whatever time suits you on [my Calendly](https://calendly.com/katie-peerteach/new-meeting)." (Do not offer a substitute time. Vary the wording naturally.)` : `  - booking_host 'katie': "No worries at all! I'm not available exactly then — would [closest time] work instead? If not, feel free to grab whatever time's easiest for you on [my Calendly](https://calendly.com/katie-peerteach/new-meeting)." (get_available_times only returns one closest option for her — that's expected, not a bug.)`}
   - booking_host 'soren': "No worries at all! I'm not available then. Would [alt time] or [alt time] work instead? Happy to find another time if not." (up to two, unchanged.)
-- If NONE of their proposed times are available, same idea — say so and offer whatever get_available_times actually returned (one time plus the Calendly line for 'katie', two alternatives for 'soren').
+${broad ? `- If NONE of their proposed times are available, same idea: say so kindly and describe your availability using availability_phrase, with the Calendly link (for 'katie'), or offer the two alternatives it returned (for 'soren').` : `- If NONE of their proposed times are available, same idea — say so and offer whatever get_available_times actually returned (one time plus the Calendly line for 'katie', two alternatives for 'soren').`}
 
 WHEN NO PREFERENCE GIVEN:
-- booking_host 'katie': propose the single time returned, with the Calendly fallback line (see CALENDLY SELF-SERVICE FALLBACK above) instead of a second time.
+${broad ? `- booking_host 'katie': give the AVAILABILITY LINE with the Calendly link (see above). No specific time.` : `- booking_host 'katie': propose the single time returned, with the Calendly fallback line (see CALENDLY SELF-SERVICE FALLBACK above) instead of a second time.`}
 - booking_host 'soren': propose 2 times and end with: "Happy to find another time if those don't work." or similar flexibility offer — unchanged.
 
-For booking_host 'soren', never propose more than 2 times in a single reply — every proposed time gets a tentative hold on his calendar until it's confirmed or declined, and more than 2 means more holds sitting there for no reason. When both land on the same day, prefer ones a few hours apart if the calendar allows it — but if the only slots available in the window they asked about are close together, offer those two rather than reaching outside the window they asked about. For booking_host 'katie', this is moot — you're only ever proposing the one time plus the Calendly fallback.
+For booking_host 'soren', never propose more than 2 times in a single reply — every proposed time gets a tentative hold on his calendar until it's confirmed or declined, and more than 2 means more holds sitting there for no reason. When both land on the same day, prefer ones a few hours apart if the calendar allows it — but if the only slots available in the window they asked about are close together, offer those two rather than reaching outside the window they asked about.${broad ? " For booking_host 'katie', no specific times are offered at all (broad availability plus the Calendly link), so no holds are made." : " For booking_host 'katie', this is moot — you're only ever proposing the one time plus the Calendly fallback."}
 
 Hard end-time constraint stated alongside a confirmation, booking_host 'katie' only (e.g. "Let's do 2:00, but I'd need to be free by 2:15"):
 - Every call is a full 30 minutes — there's no shorter version. If the time they just confirmed would run past a deadline they gave in that same message, do NOT book it as stated, and don't try to work out a better time yourself either.
@@ -519,8 +533,8 @@ Tutoring-staffing misconception (TEMPORARY rule — always escalate, never auto-
 - reason: "Possible tutoring-staffing misconception — [quote the line that suggested it]. Escalating per temporary rule while we validate this."
 - suggested_reply must still be a real draft, not left blank, and its shape depends on which signal triggered it:
   - Referral to a person/role (tutoring specialist, coordinator, etc.): acknowledge the referral warmly (following whichever referral rule above would normally apply for tone), then add one brief, non-corrective clarifying line that we work with math teachers to build peer tutoring into their own classrooms rather than sending outside tutors. Example: "Happy to connect with [name/role]! Just wanted to quickly clarify first, in case it's helpful: we work with math teachers to build peer tutoring into their own classrooms, not send in outside tutors. Let me know if that changes who makes sense to loop in."
-  - Direct operational/staffing questions (how many classes, how long on campus, what would your team do, etc.): these deserve a real answer, not a one-line aside before pivoting to a call — give the actual clarification as the substance of the reply. Example: "Great questions! Just to clarify, PeerTeach works with math teachers to build structured peer tutoring into their own classrooms, rather than placing outside tutors with students. We can support any classrooms in grades 3 and up, and all training and ongoing support are fully virtual. Looking forward to discussing this further on our call! Does [time] work for a quick Zoom?" — proposing real times the way you normally would.
-  - Out-of-class program framing: warm acknowledgement, then clarify that PeerTeach works best in math classrooms during the regular school day, say we'd still love to connect with THEM directly, and that if any of their math teachers are available we'd love to have them join the demo too, then offer one real time plus the Calendly line (call get_available_times, as in the CALENDLY SELF-SERVICE FALLBACK section). Do not ask to meet with the after-school/program lead. Example: "No worries at all, and thanks for the update! Quick note in case it's helpful: PeerTeach works best in math classrooms during the regular school day, so it's built for math teachers rather than after-school programs. I'd still love to connect with you directly, and if any of your math teachers are available, I'd love to have them join the demo too. Would [time] work for a quick 30-minute Zoom? If not, feel free to grab a time on [my Calendly](...)."
+  - Direct operational/staffing questions (how many classes, how long on campus, what would your team do, etc.): these deserve a real answer, not a one-line aside before pivoting to a call — give the actual clarification as the substance of the reply. Example: "Great questions! Just to clarify, PeerTeach works with math teachers to build structured peer tutoring into their own classrooms, rather than placing outside tutors with students. We can support any classrooms in grades 3 and up, and all training and ongoing support are fully virtual. Looking forward to discussing this further on our call! ${broad ? 'I have availability over the next couple of days. Would you like to grab a time on [my Calendly](https://calendly.com/katie-peerteach/new-meeting)?" — closing with the availability line, never a specific time.' : 'Does [time] work for a quick Zoom?" — proposing real times the way you normally would.'}
+  - Out-of-class program framing: warm acknowledgement, then clarify that PeerTeach works best in math classrooms during the regular school day, say we'd still love to connect with THEM directly, and that if any of their math teachers are available we'd love to have them join the demo too, then ${broad ? 'close with the availability line plus the Calendly link (call get_available_times, as in the AVAILABILITY LINE section; no specific time)' : 'offer one real time plus the Calendly line (call get_available_times, as in the CALENDLY SELF-SERVICE FALLBACK section)'}. Do not ask to meet with the after-school/program lead. Example: "No worries at all, and thanks for the update! Quick note in case it's helpful: PeerTeach works best in math classrooms during the regular school day, so it's built for math teachers rather than after-school programs. I'd still love to connect with you directly, and if any of your math teachers are available, I'd love to have them join the demo too. ${broad ? 'I have availability over the next couple of days. Would you like to grab a time on [my Calendly](...)?"' : 'Would [time] work for a quick 30-minute Zoom? If not, feel free to grab a time on [my Calendly](...)."'}
 - Do not treat this as a correction or imply they were wrong — keep it light and matter-of-fact either way.
 
 Prospect raises the POSSIBILITY of including more people, without having actually added them (e.g. "if you think we should include my principal, we could," "should I loop in my AP?", any hedging or ambivalence about whether to bring others in) — distinct from the cc cases below, where someone is already actually on the message:
@@ -577,7 +591,7 @@ escalate:
 - ALWAYS include suggested_reply when escalating, even when you're unsure. Write your best attempt at what a reply could say, following the same voice and rules as a normal draft. This gives the human a starting point instead of a blank page — they can send it as-is, edit it, or ignore it, but never skip writing it just because you're escalating.
 
 REMEMBER: You have access to the full email thread. Use all prior context.
-Never propose times you have not verified with get_available_times.`;
+Never propose times you have not verified with get_available_times.${broad ? " For booking_host 'katie', never offer a specific time at all: use the availability line and the Calendly link." : ""}`;
 }
 
 // Determines whether the prospect is a school-level decision-maker (principal, director,
@@ -700,6 +714,74 @@ function pickTwoSlots(
 // Builds a natural, human-sounding reference to a slot relative to today,
 // e.g. "tomorrow at 1:00 PM CDT", "this Thursday at 2:00 PM CDT", "next Monday at 10:00 AM CDT".
 // Date math is done in code (in the prospect's timezone) so the day reference is always exact.
+export type AvailabilityWindow =
+  | 'next_couple_days'
+  | 'tomorrow'
+  | 'tomorrow_and_early_next_week'
+  | 'early_next_week'
+  | 'later_this_week'
+  | 'next_week'
+  | 'coming_weeks'
+  | 'none';
+
+const AVAILABILITY_PHRASES: Record<AvailabilityWindow, string | null> = {
+  next_couple_days: 'over the next couple of days',
+  tomorrow: 'tomorrow',
+  tomorrow_and_early_next_week: 'tomorrow and early next week',
+  early_next_week: 'early next week',
+  later_this_week: 'later this week',
+  next_week: 'next week',
+  coming_weeks: 'in the coming weeks',
+  none: null,
+};
+
+// Turns Katie's real open slots into a broad, truthful statement of when she is free, in the
+// prospect's own timezone, without naming a specific time. "The next couple of days" is only used
+// when it is both true (at least two openings in that stretch) and sensible (Monday to Wednesday:
+// from Thursday on, the next couple of days run into the weekend, so it talks about tomorrow and/or
+// early next week instead).
+export function describeKatieAvailability(
+  slotStarts: string[],
+  now: Date,
+  tz: string,
+): { window: AvailabilityWindow; phrase: string | null; openDays: string[] } {
+  const keyFmt = new Intl.DateTimeFormat('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: tz });
+  const dayFmt = new Intl.DateTimeFormat('en-US', { weekday: 'long', month: 'short', day: 'numeric', timeZone: tz });
+  const todayKey = keyFmt.format(now);
+  const todayDow = new Date(todayKey).getUTCDay(); // 0=Sun..6=Sat
+  const daysUntilNextMonday = ((8 - todayDow) % 7) || 7; // Mon->7 ... Fri->3, Sat->2, Sun->1
+
+  const offsets: number[] = [];
+  const perDay = new Map<string, { label: string; n: number }>();
+  for (const iso of slotStarts) {
+    const d = new Date(iso);
+    const offset = Math.round((Date.parse(keyFmt.format(d)) - Date.parse(todayKey)) / 86400000);
+    if (offset < 0) continue;
+    offsets.push(offset);
+    const k = keyFmt.format(d);
+    const cur = perDay.get(k) ?? { label: dayFmt.format(d), n: 0 };
+    cur.n++;
+    perDay.set(k, cur);
+  }
+  const openDays = [...perDay.entries()].sort(([a], [b]) => a.localeCompare(b)).slice(0, 10).map(([, v]) => `${v.label}: ${v.n} open`);
+
+  const count = (from: number, to: number) => offsets.filter((o) => o >= from && o <= to).length;
+  const thisWeekEnd = daysUntilNextMonday - 1;
+  const earlyNext = count(daysUntilNextMonday, daysUntilNextMonday + 1);
+  const nextWeek = count(daysUntilNextMonday, daysUntilNextMonday + 4);
+
+  let window: AvailabilityWindow;
+  if (offsets.length === 0) window = 'none';
+  else if (todayDow >= 1 && todayDow <= 3 && count(0, 2) >= 2) window = 'next_couple_days';
+  else if (todayDow >= 1 && todayDow <= 3 && count(0, thisWeekEnd) >= 1) window = 'later_this_week';
+  else if (todayDow === 4 && count(1, 1) >= 1 && earlyNext >= 1) window = 'tomorrow_and_early_next_week';
+  else if (earlyNext >= 1) window = 'early_next_week';
+  else if (todayDow === 4 && count(1, 1) >= 1) window = 'tomorrow';
+  else if (nextWeek >= 1) window = 'next_week';
+  else window = 'coming_weeks';
+  return { window, phrase: AVAILABILITY_PHRASES[window], openDays };
+}
+
 export function naturalTimePhrase(isoStart: string, now: Date, tz: string): string {
   const slot = new Date(isoStart);
   const time = new Intl.DateTimeFormat('en-US', {
@@ -1038,7 +1120,7 @@ async function executeToolWithRetry(
                 Math.abs(new Date(a.startTime).getTime() - reqMs) -
                 Math.abs(new Date(b.startTime).getTime() - reqMs),
             );
-            picked = sorted.slice(0, host === 'katie' ? 1 : 2);
+            picked = host === 'katie' && !isSingleTimeOfferEnabled() ? [] : sorted.slice(0, host === 'katie' ? 1 : 2);
           }
         }
       } else if (host === 'katie') {
@@ -1047,7 +1129,9 @@ async function executeToolWithRetry(
         // holds sitting around than ever got used. The prompt pairs this with a Calendly
         // self-service link so the prospect still has an easy path if this one time
         // doesn't work, without the agent needing to hold a second slot on spec.
-        picked = slots.length > 0 ? [slots[0]] : [];
+        // Broad-availability mode (default): offer no specific time, so nothing is picked and no hold
+        // is made. The single-time behavior above stays for KATIE_SINGLE_TIME_OFFER_ENABLED=true.
+        picked = !isSingleTimeOfferEnabled() ? [] : slots.length > 0 ? [slots[0]] : [];
       } else {
         picked = pickTwoSlots(slots);
       }
@@ -1069,7 +1153,11 @@ async function executeToolWithRetry(
       // Cheap (2x30min, spread across different days) and fails open on any error. Awaited
       // (not fire-and-forget) so the write can't get dropped mid-flight when the
       // serverless function's process freezes after the response is sent.
-      if (envOptional('GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON')) {
+      // Katie's calendar is no longer held for offers (broad-availability mode). A time the prospect
+      // asked for and that checked out is held by the booking path itself when it is booked, so
+      // nothing needs holding here. Soren's offers are unchanged.
+      const holdProposed = host === 'soren' || isSingleTimeOfferEnabled();
+      if (holdProposed && envOptional('GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON')) {
         const leadName = [payload.firstName, payload.lastName].filter(Boolean).join(' ');
         for (const s of picked) {
           await createHold({
@@ -1086,6 +1174,30 @@ async function executeToolWithRetry(
       }
 
       console.log(`[agent] get_available_times returned ${slots.length} slots (host=${host}), suggesting: ${suggested.map(s => s.natural).join(' | ')}`);
+      // Broad-availability mode (default): Katie's reply describes when she is free and links Calendly
+      // instead of naming one held time. Nothing was picked above, so no hold has been made. The
+      // specific-time flow below stays for KATIE_SINGLE_TIME_OFFER_ENABLED=true.
+      if (host === 'katie' && !requestedAvailable && !isSingleTimeOfferEnabled()) {
+        const avail = describeKatieAvailability(slots.map((s) => s.startTime), new Date(), tz);
+        console.log(`[agent] broad availability for ${payload.lead_email}: window=${avail.window} (${slots.length} open in range)`);
+        const calendlyLink = '[my Calendly](https://calendly.com/katie-peerteach/new-meeting)';
+        return {
+          data: {
+            requested_time_available: false,
+            suggested_times: [],
+            total_open_in_range: slots.length,
+            open_days: avail.openDays,
+            availability_window: avail.window,
+            availability_phrase: avail.phrase,
+            booking_host: host,
+            instruction:
+              (requestedTime ? 'The exact time the prospect asked for is NOT open. Say so kindly and briefly ("No worries, I am not available right then"), and do NOT offer a substitute time. ' : '') +
+              (avail.phrase
+                ? `Do NOT name or offer any specific day-and-time: no times are being held. Instead say, in your own natural, relaxed words, that you have availability ${avail.phrase}, then invite them to pick a time on Calendly with this exact markdown link: ${calendlyLink} (if you are not sending as Katie herself, write "Katie's Calendly" as the link text). Example in the spirit of: "I have availability ${avail.phrase}. Would you like to snag a time on ${calendlyLink}?" Vary the wording. If the prospect named a particular day, you may say you have availability that day only if open_days lists it.`
+                : `Nothing is open in the range you searched. Do NOT claim any availability and do NOT name a time. Invite them to see what is open on ${calendlyLink} (or "Katie's Calendly" if not sending as Katie), or search a later range with get_available_times if they asked about a specific period.`),
+          },
+        };
+      }
       let instruction = requestedAvailable
         ? 'The requested time is available. Confirm it, referring to it naturally using its "natural" phrasing.'
         : 'Refer to these exact slots in your reply, using the "natural" phrasing for each (e.g. "tomorrow at 1:00 PM CDT"). Do not pick different times.';

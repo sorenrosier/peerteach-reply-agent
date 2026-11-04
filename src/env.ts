@@ -29,6 +29,7 @@ const OPTIONAL_VARS = [
   'SOREN_BOOKING_ENABLED',
   'REMINDER_AUTO_SEND_ENABLED',
   'NEW_RULE_EMAILS_AUTO_SEND_ENABLED',
+  'KATIE_SINGLE_TIME_OFFER_ENABLED',
 ] as const;
 
 // Soren's own calendar is booked directly via Google Calendar (no separate Calendly
@@ -127,4 +128,13 @@ export function isReminderAutoSendEnabled(): boolean {
 // automatically; nothing else needs to change.
 export function isNewRuleAutoSendEnabled(): boolean {
   return process.env.NEW_RULE_EMAILS_AUTO_SEND_ENABLED === 'true';
+}
+
+// Katie-hosted replies used to propose ONE specific time and put a tentative hold on her calendar
+// for it (with the Calendly link as a fallback). That is switched off: replies now describe her
+// availability in broad terms ("I have availability over the next couple days") and point to
+// Calendly, and no hold is created. The old behavior is kept in the code; set this to 'true' (plus
+// a redeploy) to bring it back. Soren-hosted offers are unaffected either way.
+export function isSingleTimeOfferEnabled(): boolean {
+  return process.env.KATIE_SINGLE_TIME_OFFER_ENABLED === 'true';
 }
