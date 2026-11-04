@@ -1471,8 +1471,11 @@ export async function runAgent(
       let cleaned = text
         .replace(/^```(?:\w+)?\s*/i, '')
         .replace(/```$/i, '')
-        .replace(/—/g, ',')
-        .replace(/–/g, ',')
+        // A dash between two numbers is a range ("grades 3–10", "2:00–2:30"): make it a hyphen. The
+        // blanket dash-to-comma rule below turned "grades 3–10" into "grades 3,10" in a live reply.
+        .replace(/(\d|\bK)\s*[–—]\s*(\d)/g, '$1-$2')
+        .replace(/\s+[–—]\s+/g, ', ')
+        .replace(/[—–]/g, ', ')
         .trim();
 
       // Strip any reasoning that leaked before "Hi [name],"

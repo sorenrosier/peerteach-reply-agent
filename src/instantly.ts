@@ -338,6 +338,10 @@ export interface LeadLookup {
   campaignId: string;
   interestStatus: number;
   subsequenceId: string | null;
+  firstName: string;
+  lastName: string;
+  // Times (epoch seconds) of emails this agent sent to the lead, from the agent_send_ts variable.
+  agentSendStamps: number[];
 }
 
 // Finds a lead by email with no campaign filter — for cases where we only know the email
@@ -360,7 +364,53 @@ export async function findLeadByEmailAnyCampaign(leadEmail: string): Promise<Lea
     campaignId: match.campaign,
     interestStatus: match.lt_interest_status ?? 0,
     subsequenceId: match.subsequence_id ?? null,
+    firstName: String(match.first_name ?? match.payload?.firstName ?? ''),
+    lastName: String(match.last_name ?? match.payload?.lastName ?? ''),
+    agentSendStamps: parseSendStamps(match.payload?.[AGENT_SEND_VAR]),
   };
+}
+
+// True if an email sent at `t` (epoch seconds) is one of this agent's own sends rather than
+// something a teammate wrote by hand.
+export function isAgentSendAt(stamps: number[], t: number): boolean {
+  return stamps.some((s) => Math.abs(s - t) <= AGENT_SEND_MATCH_SECONDS);
+}
+
+export interface SentEmail {
+  id: string;
+  t: number; // epoch seconds
+  eaccount: string;
+  lead: string;
+  campaignId: string;
+  html: string;
+}
+
+// Every manual/API reply email (ue_type 3) sent since `sinceIso`, across all leads, newest page
+// first. Used to find emails that shared the Calendly link without needing any other record.
+export async function listRecentSentEmails(sinceIso: string, maxPages = 10): Promise<SentEmail[]> {
+  const out: SentEmail[] = [];
+  let startingAfter: string | undefined;
+  for (let page = 0; page < maxPages; page++) {
+    const res = await instantlyRequest<{ items?: any[]; next_starting_after?: string }>({
+      method: 'GET',
+      url: '/emails',
+      params: { email_type: 'manual', min_timestamp_created: sinceIso, limit: 100, ...(startingAfter ? { starting_after: startingAfter } : {}) },
+    });
+    for (const e of res.items ?? []) {
+      if (e.ue_type !== 3) continue;
+      out.push({
+        id: e.id,
+        t: new Date(e.timestamp_email).getTime() / 1000,
+        eaccount: String(e.eaccount ?? ''),
+        lead: String(e.lead ?? '').toLowerCase(),
+        campaignId: String(e.campaign_id ?? ''),
+        html: String(e.body?.html ?? e.body?.text ?? ''),
+      });
+    }
+    startingAfter = res.next_starting_after;
+    if (!startingAfter) break;
+  }
+  return out;
 }
 
 // Marks a lead as having booked a meeting (interest_value 2).

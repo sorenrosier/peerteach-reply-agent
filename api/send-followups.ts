@@ -1,8 +1,8 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { runFollowUps } from '../src/followups';
 
-// GET /api/send-followups — run on a schedule (Vercel Cron) to nudge leads who were offered a
-// meeting time (with Katie's Calendly link) and haven't answered after 24 hours. Vercel signs
+// GET /api/send-followups — run on a schedule (Vercel Cron) to nudge leads who were sent
+// Katie's Calendly link and haven't answered or booked after 24 hours. Vercel signs
 // cron requests with a bearer token matching CRON_SECRET; reject anything else so this can't be
 // triggered by an outsider hitting the URL directly.
 export default async function handler(

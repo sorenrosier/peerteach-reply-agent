@@ -1,14 +1,22 @@
-import { listProposedHolds, markHoldFollowUp, hasRealBookingForLead, HoldInfo } from './googleCalendar';
-import { listLeadEmails, findLeadByEmailAnyCampaign, replyToEmail } from './instantly';
+import { hasRealBookingForLead } from './googleCalendar';
+import { listLeadEmails, findLeadByEmailAnyCampaign, replyToEmail, listRecentSentEmails, isAgentSendAt, SentEmail } from './instantly';
 import { getSenderIdentity } from './agent';
 import { CALENDLY_SCHEDULING_URL, isAutoSendEnabled } from './env';
 import { postProactiveApproval, postInfoNote, replySubject } from './slack';
 import { renderLinks } from './linkFormat';
 
-// A follow-up is due once a time offer has gone unanswered for this long. Holds are deleted
-// at HOLD_TTL_HOURS (48 by default), so the window closes a little before that.
+// A follow-up is due once a Calendly link we sent has gone unanswered for this long, and stops
+// being due after FOLLOWUP_WINDOW_END_HOURS (an hourly cron means each one is caught well inside it).
 const FOLLOWUP_AFTER_HOURS = 24;
-const FOLLOWUP_WINDOW_END_HOURS = 46;
+const FOLLOWUP_WINDOW_END_HOURS = 48;
+// What marks an email as one that shared Katie's Calendly page.
+const CALENDLY_MARKER = 'calendly.com/katie-peerteach';
+// Fixed phrases from the follow-up wording above. A follow-up itself contains the Calendly link, so
+// without this it would count as a fresh "offer" a day later and get followed up in turn.
+const FOLLOWUP_MARKERS = ['so I wanted to check in and see if', 'in case my last note got buried', 'A quick nudge on this one'];
+export function isFollowUpText(html: string): boolean {
+  return FOLLOWUP_MARKERS.some((m) => html.includes(m));
+}
 
 const VARIANTS = [
   (n: string, link: string, sign: string) =>
@@ -35,82 +43,82 @@ export interface FollowUpResult {
   preview?: string[];
 }
 
-// One follow-up per time offer, 24 hours after it was sent with no reply. Katie's offers only
-// (they carry her Calendly link; Soren's don't). Offers still awaiting an answer are exactly
-// the "proposed" holds that are still on the calendar: a new reply clears them and so does a
-// booking, so a surviving hold means the lead hasn't responded. Each candidate is then
-// re-checked against Instantly (the offer really went out, nothing was sent or received since,
-// the lead is still open) and the hold is tagged so no later tick repeats it. The follow-up is
-// sent automatically (the team confirmed these work); a short note in Slack records each one.
-// It follows the same AUTO_SEND_ENABLED kill switch as ordinary replies, so turning auto-send
-// off sends follow-ups to Slack for approval again.
+// One follow-up per Calendly-link email, 24 hours after the agent sent it with no reply. Katie's
+// emails only. Candidates come straight from Instantly (agent-sent replies, 24 to 48 hours old,
+// whose body links Katie's Calendly page, newest per lead), so this works however the email was
+// worded and needs no calendar hold. Each candidate is then re-checked: nothing sent or received
+// since (which also stops a follow-up from being followed up), the email really was the agent's
+// and not a teammate's, the lead is still open, and nothing is booked. The follow-up is sent
+// automatically (the team confirmed these work); a short note in Slack records each one. It
+// follows the same AUTO_SEND_ENABLED kill switch as ordinary replies, so turning auto-send off
+// sends follow-ups to Slack for approval again.
 export async function runFollowUps(opts: { dryRun?: boolean } = {}): Promise<FollowUpResult> {
   const result: FollowUpResult = { checked: 0, queued: 0, sent: 0, skipped: 0, ...(opts.dryRun ? { preview: [] } : {}) };
-  const holds = await listProposedHolds(FOLLOWUP_AFTER_HOURS, FOLLOWUP_WINDOW_END_HOURS);
-  const seenLeads = new Set<string>();
+  const nowSec = Date.now() / 1000;
+  const sent = await listRecentSentEmails(new Date((nowSec - (FOLLOWUP_WINDOW_END_HOURS + 4) * 3600) * 1000).toISOString());
 
-  for (const h of holds) {
-    if (h.followupStatus) continue;
-    const leadKey = h.leadEmail.toLowerCase();
-    // A lead can hold more than one slot from older two-time offers: handle them together.
-    if (seenLeads.has(leadKey)) { await markHoldFollowUp(h.eventId, 'skipped'); continue; }
-    seenLeads.add(leadKey);
+  // The latest Calendly-link email per lead inside the window.
+  const latest = new Map<string, SentEmail>();
+  for (const e of sent) {
+    if (!e.lead || !e.html.includes(CALENDLY_MARKER) || isFollowUpText(e.html)) continue;
+    if (e.t > nowSec - FOLLOWUP_AFTER_HOURS * 3600 || e.t < nowSec - FOLLOWUP_WINDOW_END_HOURS * 3600) continue;
+    if (getSenderIdentity(e.eaccount).firstName !== 'Katie') continue;
+    const cur = latest.get(e.lead);
+    if (!cur || e.t > cur.t) latest.set(e.lead, e);
+  }
+
+  for (const offer of latest.values()) {
     result.checked++;
     try {
-      const outcome = await followUpFor(h, opts.dryRun ? result.preview : undefined);
+      const outcome = await followUpFor(offer, opts.dryRun ? result.preview : undefined);
       if (opts.dryRun) {
-        result.preview!.push(`${h.leadEmail}: ${outcome}`);
-        if (outcome === 'queued') result.queued++; else if (outcome === 'skipped') result.skipped++;
+        result.preview!.push(`${offer.lead}: ${outcome}`);
+        if (outcome === 'queued') result.queued++; else result.skipped++;
         continue;
       }
-      // 'not-yet' (offer under 24h old, or not actually sent yet) must stay untagged so a later
-      // tick looks again; tagging it would quietly cancel its follow-up forever.
-      if (outcome === 'not-yet') continue;
-      await markHoldFollowUp(h.eventId, outcome);
       if (outcome === 'sent') result.sent++;
       else if (outcome === 'queued') result.queued++;
       else result.skipped++;
     } catch (err) {
-      console.warn(`[followups] ${h.leadEmail} failed (will retry next tick):`, err instanceof Error ? err.message : String(err));
+      console.warn(`[followups] ${offer.lead} failed (will retry next tick):`, err instanceof Error ? err.message : String(err));
     }
   }
-  console.log(`[followups] holds=${holds.length} checked=${result.checked} queued=${result.queued} sent=${result.sent} skipped=${result.skipped}`);
+  console.log(`[followups] sent-emails=${sent.length} candidates=${latest.size} queued=${result.queued} sent=${result.sent} skipped=${result.skipped}`);
   return result;
 }
 
 // previewSink: in a dry run, receives the draft that would have been posted instead of sending
 // or posting anything.
-async function followUpFor(h: HoldInfo, previewSink?: string[]): Promise<'sent' | 'queued' | 'skipped' | 'not-yet'> {
+async function followUpFor(offer: SentEmail, previewSink?: string[]): Promise<'sent' | 'queued' | 'skipped'> {
   const nowSec = Date.now() / 1000;
-  const emails = await listLeadEmails(h.leadEmail);
-  const holdSec = new Date(h.createdAt || h.startIso).getTime() / 1000;
+  const emails = await listLeadEmails(offer.lead);
 
-  // When the offer actually went out: the first reply of ours after the hold was made. With no
-  // such reply it's still waiting in Slack (or was skipped), so there's nothing to follow up on.
-  const offer = emails.filter((e) => e.ue === 3 && e.t >= holdSec - 30).sort((a, b) => a.t - b.t)[0];
-  if (!offer) return 'not-yet';
-  if (nowSec - offer.t < FOLLOWUP_AFTER_HOURS * 3600) return 'not-yet';
-
-  // Anything since the offer — a reply from them, or another message from us — means the
-  // conversation has moved on and a canned nudge would be wrong.
+  // Anything since the offer (a reply from them, or another message from us, a follow-up included)
+  // means the conversation has moved on and a canned nudge would be wrong.
   const after = emails.filter((e) => e.t > offer.t + 5);
   if (after.some((e) => e.ue === 2 || e.ue === 3)) return 'skipped';
 
-  const lead = await findLeadByEmailAnyCampaign(h.leadEmail);
-  if (lead && (lead.interestStatus < 0 || lead.interestStatus >= 2)) return 'skipped'; // not interested / already booked / closed
-  if (await hasRealBookingForLead(h.leadEmail)) return 'skipped';
+  const lead = await findLeadByEmailAnyCampaign(offer.lead);
+  if (!lead) return 'skipped';
+  if (lead.interestStatus < 0 || lead.interestStatus >= 2) return 'skipped'; // not interested / already booked / closed
+  // Only the agent's own emails. Something Katie wrote by hand that happens to link her Calendly is
+  // her conversation, not ours to nudge.
+  if (!isAgentSendAt(lead.agentSendStamps, offer.t)) return 'skipped';
+  if (await hasRealBookingForLead(offer.lead)) return 'skipped';
 
-  const inbound = emails.filter((e) => e.ue === 2 && e.from === h.leadEmail.toLowerCase()).sort((a, b) => b.t - a.t)[0];
+  const inbound = emails.filter((e) => e.ue === 2 && e.from === offer.lead).sort((a, b) => b.t - a.t)[0];
   if (!inbound) return 'skipped';
   const identity = getSenderIdentity(inbound.eaccount);
-  if (identity.firstName !== 'Katie') return 'skipped'; // only Katie's Calendly offers
+  if (identity.firstName !== 'Katie') return 'skipped';
 
-  const first = (h.leadName || '').trim().split(/\s+/)[0] || 'there';
-  const draft = buildFollowUpText(first, identity.signOff, h.leadEmail);
+  const first = (lead.firstName || '').trim().split(/\s+/)[0] || 'there';
+  const leadName = [lead.firstName, lead.lastName].filter(Boolean).join(' ') || offer.lead;
+  const campaignId = offer.campaignId || lead.campaignId;
+  const draft = buildFollowUpText(first, identity.signOff, offer.lead);
   const subject = replySubject(inbound.subject);
 
   if (previewSink) {
-    previewSink.push(`--- would post for ${h.leadEmail} (offer ${Math.round((nowSec - offer.t) / 3600)}h ago):\n${draft}`);
+    previewSink.push(`--- would post for ${offer.lead} (Calendly link sent ${Math.round((nowSec - offer.t) / 3600)}h ago):\n${draft}`);
     return 'queued';
   }
 
@@ -121,17 +129,17 @@ async function followUpFor(h: HoldInfo, previewSink?: string[]): Promise<'sent' 
       eaccount: inbound.eaccount,
       subject,
       body: { text: rendered.plainText, html: rendered.html },
-      stamp: { campaignId: h.campaignId, leadEmail: h.leadEmail },
+      stamp: { campaignId, leadEmail: offer.lead },
     });
-    await postInfoNote(`:envelope: Sent a 24-hour follow-up to ${h.leadName || h.leadEmail} (<mailto:${h.leadEmail}|${h.leadEmail}>):\n>${rendered.slackMrkdwn.replace(/\n/g, '\n>')}`);
+    await postInfoNote(`:envelope: Sent a 24-hour follow-up to ${leadName} (<mailto:${offer.lead}|${offer.lead}>):\n>${rendered.slackMrkdwn.replace(/\n/g, '\n>')}`);
     return 'sent';
   }
   await postProactiveApproval({
     header: ':hourglass_flowing_sand: 24-hour follow-up — needs approval',
-    why: `A time was offered ${Math.round((nowSec - offer.t) / 3600)} hours ago with no reply yet. This is a gentle nudge with the calendar link.`,
-    name: h.leadName || h.leadEmail,
-    leadEmail: h.leadEmail,
-    campaignId: h.campaignId,
+    why: `Katie's Calendly link was shared ${Math.round((nowSec - offer.t) / 3600)} hours ago with no reply or booking yet. This is a gentle nudge with the calendar link.`,
+    name: leadName,
+    leadEmail: offer.lead,
+    campaignId,
     eaccount: inbound.eaccount,
     emailId: inbound.id,
     subject,
