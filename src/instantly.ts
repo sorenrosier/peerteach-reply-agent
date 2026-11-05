@@ -432,6 +432,30 @@ export async function removeLeadFromSubsequence(leadId: string): Promise<void> {
   });
 }
 
+// A lead's custom variables (they come back merged into `payload` — see
+// checkAndMarkEmailProcessed). Empty object if the lead isn't found.
+export async function getLeadVariables(campaign_id: string, lead_email: string): Promise<Record<string, string>> {
+  const id = await findLeadIdByEmail(campaign_id, lead_email);
+  if (!id) return {};
+  const lead = await instantlyRequest<{ payload?: Record<string, string> }>({ method: 'GET', url: `/leads/${id}` });
+  return lead.payload ?? {};
+}
+
+// First name on a sending account, e.g. "Katie" for katiek@gopeerteach.com. Checked live: the
+// account lookup returns first_name/last_name, and an unknown address is a clean 404.
+export async function getAccountFirstName(eaccount: string): Promise<string | null> {
+  try {
+    const acct = await instantlyRequest<{ first_name?: string }>({
+      method: 'GET',
+      url: `/accounts/${encodeURIComponent(eaccount)}`,
+    });
+    return acct.first_name?.trim() || null;
+  } catch (err) {
+    console.warn('[instantly] getAccountFirstName failed:', err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
 export async function updateLeadVariables(
   lead_email: string,
   campaign_id: string,

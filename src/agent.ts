@@ -193,7 +193,7 @@ export function getSenderIdentity(emailAccount: string): { firstName: string; si
 
 // Returns the current phase of the US school year plus natural language guidance,
 // derived from the current month so the agent's seasonal references are always accurate.
-function getSchoolYearContext(now: Date): string {
+export function getSchoolYearContext(now: Date): string {
   const month = now.getMonth(); // 0 = Jan, 5 = Jun, 7 = Aug, 8 = Sep
   const day = now.getDate();
 

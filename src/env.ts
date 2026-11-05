@@ -30,6 +30,9 @@ const OPTIONAL_VARS = [
   'REMINDER_AUTO_SEND_ENABLED',
   'NEW_RULE_EMAILS_AUTO_SEND_ENABLED',
   'KATIE_SINGLE_TIME_OFFER_ENABLED',
+  'TEACHER_AUTO_SEND_ENABLED',
+  'PEERTEACH_ADMIN_TOKEN',
+  'PEERTEACH_API_URL',
 ] as const;
 
 // Soren's own calendar is booked directly via Google Calendar (no separate Calendly
@@ -138,3 +141,18 @@ export function isNewRuleAutoSendEnabled(): boolean {
 export function isSingleTimeOfferEnabled(): boolean {
   return process.env.KATIE_SINGLE_TIME_OFFER_ENABLED === 'true';
 }
+
+// Teacher-facing replies (src/teacherAgent.ts) have their own auto-send switch, separate from
+// AUTO_SEND_ENABLED, so turning on auto-send for the admin/principal system never starts sending
+// teacher replies unreviewed. Defaults to off: every teacher draft goes to Slack for approval.
+// Flip to 'true' (plus a redeploy) once the drafts have been watched working.
+export function isTeacherAutoSendEnabled(): boolean {
+  return process.env.TEACHER_AUTO_SEND_ENABLED === 'true';
+}
+
+// PeerTeach's own backend (peer-teach/peerteach-match), where Remy's demo links are created and
+// stored. Confirmed live: a bogus token on GET /ai-agents/demo/links/<token> there returns the
+// backend's own "not_found" error.
+export const PEERTEACH_API_URL_DEFAULT = 'https://server.peerteach.org';
+// The page a demo link opens: <frontend>/ai-agents/demo?link=<token> (the backend's _link_url).
+export const PEERTEACH_DEMO_PAGE = 'https://app.peerteach.org/ai-agents/demo';

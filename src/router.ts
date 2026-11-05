@@ -1,11 +1,11 @@
-import { runAgent, AgentResult, computeGuestEmails, getBookingHost, BookingHost, classifyAudience } from './agent';
+import { runAgent, AgentResult, computeGuestEmails, getBookingHost, BookingHost } from './agent';
 import { replyToEmail, fetchEmailThread, checkAndMarkEmailProcessed, findRecentHumanReply, getReleasedSlots } from './instantly';
 import { bookMeeting } from './calendly';
 import { bookSorenMeeting } from './sorenBooking';
 import { deleteHoldsForLead, hasExistingHold, getHoldsForLead } from './googleCalendar';
 import { envOptional, isAutoSendEnabled, isNewRuleAutoSendEnabled, isSorenBookingEnabled, SOREN_EMAIL } from './env';
 import { releaseDisplacedHolds, restoreDisplacedHolds, notifyDisplacedLeads } from './displacement';
-import { routeTeacherReply } from './teacherAgent';
+import { routeTeacherReply, isTeacherPersona } from './teacherAgent';
 import { renderLinks } from './linkFormat';
 import {
   postAgentDraft,
@@ -125,14 +125,13 @@ export async function routeReply(payload: InstantlyWebhookPayload): Promise<void
   }
 
   // Branch to the teacher-facing system BEFORE any of the admin/principal-specific logic
-  // below runs (holds, booking, the demo-scheduling agent). Only a confident 'teacher'
-  // classification branches — 'admin' and 'unknown' both stay on the existing path, so a
-  // missing/unparseable Persona/Role never routes someone into the (currently placeholder)
-  // teacher system by accident. Checked live against 133 real leads from the last 30 days
-  // before switching to this: 123 principals, 2 site admins, 1 teacher (an existing-user
-  // edge case) — persona is a clean, reliable signal in practice, not the noisy one it
-  // could theoretically be if current campaigns mixed audiences the way future ones won't.
-  if (classifyAudience(payload) === 'teacher') {
+  // below runs (holds, booking, the demo-scheduling agent). Only a lead whose Persona field
+  // itself says teacher branches; everything else, including a missing Persona, stays on the
+  // existing path. (classifyAudience() was used here before, but its Role fallback calls any
+  // non-admin title a teacher, e.g. "Math Coach" or "Counselor" — too broad for routing.)
+  // Checked live against 133 real leads from the last 30 days before switching to persona:
+  // 123 principals, 2 site admins, 1 teacher (an existing-user edge case).
+  if (isTeacherPersona(payload)) {
     await routeTeacherReply(payload);
     return;
   }

@@ -8,3 +8,7 @@ dist/
 .DS_Store
 .vercel
 keys/
+
+# Teacher replay output holds real teachers' emails
+scripts/teacher-replay-results.md
+scripts/teacher-replay-cases-*.json

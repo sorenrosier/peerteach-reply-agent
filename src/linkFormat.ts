@@ -40,7 +40,8 @@ export function renderLinks(raw: string): RenderedLinks {
     html += escapeHtml(before).replace(/\n/g, '<br>');
     slackMrkdwn += escapeSlackMrkdwn(before);
 
-    plainText += `${label} (${url})`;
+    // A bare link written as [url](url) (the teacher demo link) prints once, not "url (url)".
+    plainText += label === url ? url : `${label} (${url})`;
     html += `<a href="${escapeHtml(url)}">${escapeHtml(label)}</a>`;
     slackMrkdwn += `<${url}|${escapeSlackMrkdwn(label)}>`;
 

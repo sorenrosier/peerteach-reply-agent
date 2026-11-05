@@ -428,11 +428,13 @@ export async function postErrorNotification(
 export async function postAgentDraft(
   payload: InstantlyWebhookPayload,
   result: AgentResult,
+  // Optional replacement header, e.g. to label teacher-system cards. Omitted = unchanged.
+  headerOverride?: string,
 ): Promise<void> {
   const draft = result.draft ?? '';
-  const header = result.booked
+  const header = headerOverride ?? (result.booked
     ? ':calendar: Reply ready — books the meeting when you click Send'
-    : ':pencil2: Draft reply — needs approval';
+    : ':pencil2: Draft reply — needs approval');
 
   const buttonValue: SendReplyButtonValue = {
     email_id: payload.email_id,
@@ -521,11 +523,13 @@ export async function postAgentDraft(
 export async function postAutoSentNotification(
   payload: InstantlyWebhookPayload,
   result: AgentResult,
+  // Optional replacement header, e.g. to label teacher-system cards. Omitted = unchanged.
+  headerOverride?: string,
 ): Promise<void> {
   const draft = result.draft ?? '';
-  const header = result.booked
+  const header = headerOverride ?? (result.booked
     ? ':zap: Auto-sent — meeting booked (no human review)'
-    : ':zap: Auto-sent (no human review)';
+    : ':zap: Auto-sent (no human review)');
 
   const blocks: any[] = [
     { type: 'header', text: { type: 'plain_text', text: header, emoji: true } },
