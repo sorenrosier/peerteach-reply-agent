@@ -206,11 +206,12 @@ function leadFirstName(payload: InstantlyWebhookPayload): string {
 
 // The first teacher campaign (11/5/26) stores the full name as `school_name` ("Helen Hansen
 // Elementary") next to a short `School/District Nickname` ("Hansen Elementary"); confirmed in a
-// real webhook delivery that both arrive as top-level payload fields. Prefer the full name:
-// it's what the demo link and Remy's greeting use.
+// real webhook delivery that both arrive as top-level payload fields. Prefer the nickname (Soren's
+// call: it reads more naturally, and it's what the cold email itself uses); it's what the demo
+// link and Remy's greeting use. Fall back to the full name, then the district.
 export function leadSchool(payload: InstantlyWebhookPayload): string {
   return String(
-    payload['school_name'] || payload.School || payload['School/District Nickname'] || payload['district_name'] || payload['District Name'] || '',
+    payload['School/District Nickname'] || payload['school_name'] || payload.School || payload['district_name'] || payload['District Name'] || '',
   ).trim();
 }
 
