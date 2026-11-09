@@ -4,7 +4,8 @@
 // same things. Screen-by-screen UI detail is left out (Remy covers that live in the demo).
 // When Remy's files change, update this to match. Anything not stated here is not a fact the
 // agent may assert: it escalates instead (see TEAM_FOLLOWS_UP and the prompt's escalation
-// rules).
+// rules). The English Learner section came from Soren on 2026-11-09 and isn't in Remy's
+// files.
 export const TEACHER_FACTS = `
 WHAT PEERTEACH IS
 - In a sentence: PeerTeach trains all the kids in a class to be effective helpers, uses quick micro-assessments to decide how to pair them, and guides the peer coaching between them, so the whole class gets 1:1 help at once.
@@ -40,6 +41,11 @@ PAIRING AND THE CLASSROOM
 - Teachers can't upload their own problems. Questions come in mild, medium and spicy difficulty.
 - AI: Mathy is the AI math tutor inside PeerTeach. AI features can be turned off for a whole school or a single teacher.
 
+ENGLISH LEARNERS AND MULTILINGUAL CLASSROOMS
+- PeerTeach is designed with multilingual learners in mind. Math content and peer-coaching support are available in multiple languages (students can switch the screen between 25 languages), and students can be paired with classmates who speak their home language.
+- Research: our research has found PeerTeach to be the most powerful learning intervention for English Learners in math. Present it as our research's finding ("our research has found..."), never as a promise about their students.
+- The study behind it (share ONLY when they ask for details, evidence, the study or the numbers; otherwise the one-sentence finding above is enough): a year-long randomized controlled trial run by independent evaluators, with about 1,000 students across 7 states. PeerTeach students significantly outgrew their classmates in math, and for English learners the effect was particularly strong, at 0.30. The comparison group wasn't sitting idle: those students were using IXL, Freckle, Khan Academy and other well-evidenced math programs. Don't add anything beyond this (no other statistics, author names or publication details); for more, point to peerteach.org.
+
 SETUP, SUPPORT, DATA
 - Adding students: Google Classroom import, roster upload, or a join code. Students sign in with Google, Microsoft or Clever.
 - Onboarding: one call of about 30 to 45 minutes with Katie, our head of school partnerships and a former PeerTeach teacher herself: setting up the account, adding students, walking through a first session. Other math teachers at the school are welcome to join.
@@ -73,5 +79,6 @@ export const TEAM_FOLLOWS_UP = `
 - Whether other schools in their district use PeerTeach, or anything about a specific named school
 - Security details beyond "we regularly complete data privacy agreements"
 - Exact quotes beyond the per-student tiers above
+- Study details beyond what FACTS says about the English Learner trial
 - Anything not covered in FACTS
 `.trim();
