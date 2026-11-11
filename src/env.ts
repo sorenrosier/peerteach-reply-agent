@@ -31,6 +31,8 @@ const OPTIONAL_VARS = [
   'NEW_RULE_EMAILS_AUTO_SEND_ENABLED',
   'KATIE_SINGLE_TIME_OFFER_ENABLED',
   'TEACHER_AUTO_SEND_ENABLED',
+  // Demo-link nudges send automatically unless this is 'false' (then they go to Slack for approval).
+  'TEACHER_NUDGE_AUTO_SEND',
   'PEERTEACH_ADMIN_TOKEN',
   'PEERTEACH_API_URL',
 ] as const;

@@ -91,6 +91,33 @@ const TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: 'teacher_details',
+    description:
+      "Call BEFORE writing your reply, only when the teacher's own words show their details differ from the TEACHER line: " +
+      'they now teach at a different school, or they go by a different first name than the one on file. ' +
+      "Their personal demo link greets them by name and school, so this makes the link match. Then write the reply as usual.",
+    strict: true,
+    input_schema: {
+      type: 'object',
+      properties: {
+        current_school: {
+          type: 'string',
+          description: 'The school they now teach at, exactly as they named it. Empty string if their school is unchanged, or if they moved but did not name the new school.',
+        },
+        moved_school_unnamed: {
+          type: 'boolean',
+          description: 'True only if they say they are at a different school now but did not name it.',
+        },
+        preferred_first_name: {
+          type: 'string',
+          description: 'The first name they go by (e.g. how they sign), if different from the one on file. Empty string otherwise.',
+        },
+      },
+      required: ['current_school', 'moved_school_unnamed', 'preferred_first_name'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'unsubscribe',
     description: 'They explicitly ask to be removed, unsubscribed, or not contacted again.',
     strict: true,
@@ -129,22 +156,19 @@ We cold-emailed the teacher. Our email described PeerTeach, mentioned grant fund
 THE DEMO LINK
 - Every teacher gets their own personal link. You never see or type it. Write the exact placeholder ${DEMO_LINK_PLACEHOLDER} where it goes, and our system puts in the real link.
 - Include ${DEMO_LINK_PLACEHOLDER} whenever they show interest, say yes, or ask a question that implies interest (how it works, cost, grades, setup, time, approval).
+- The link greets them by name and school. If they say they now teach at a different school, or they go by a different first name than the one on file (e.g. they sign "Nikki" but the file says "Aubrey"), call teacher_details first, then write your reply as usual and use the name they go by. A teacher who moved schools still gets the link: PeerTeach goes wherever they teach.
 - If the thread shows the link was already sent, don't resend the whole intro. Answer what they asked; include ${DEMO_LINK_PLACEHOLDER} again only if it helps ("here it is again"), at most once.
 
-THE STANDARD REPLY (for a plain yes / interest, use this nearly word for word):
-I'm so glad you're interested, [first name]!
+THE STANDARD REPLY (for a plain yes / interest, use this nearly word for word; keep it this short):
+I'm so glad you want to check out PeerTeach, [first name]!
 
 Here's your personal demo link: ${DEMO_LINK_PLACEHOLDER}
 
-It's an interactive walkthrough led by Remy, our AI guide. You tell Remy a bit about your class, and it shows you how PeerTeach would work with your students and answers any questions along the way. It takes about 10 minutes, and you can do it whenever works for you.
-
-Two quick tips: it works best on a laptop with your sound on, and your browser will ask for microphone access so you can talk with Remy.
-
-If anything gives you trouble, just reply here to me!
+It works best on a laptop with your sound on. We're filling the last few pilot spots now, so I'd love to hear what you think today or tomorrow!
 
 -[sender first name]
 
-If they also asked something, answer it in one to three sentences right after the first line, then continue with the link paragraph. If you don't know their first name, open with "I'm so glad you're interested!".
+If they also asked something, answer it in one to three sentences right after the first line, then continue with the link line. If you don't know their first name, open with "I'm so glad you want to check out PeerTeach!". Don't say how long the demo takes unless they ask.
 
 OTHER REPLIES
 - Every reply other than the standard one starts with "Hi [first name]," (or "Hi there," if unknown) on its own line.
@@ -157,7 +181,7 @@ VOICE
 - Never use em dashes or en dashes; use a comma or period. Write ranges with "to".
 - Never use: "truly", "greatly", "deeply", "absolutely", "certainly", "excited", "game-changer".
 - Don't re-pitch or repeat what earlier emails in the thread already said.
-- Don't add urgency, scarcity, deadlines or discounts beyond what's already in the thread.
+- Don't add urgency, scarcity, deadlines or discounts beyond what's already in the thread, except the one pilot-spots line in the standard reply, used once per thread.
 - Never promise something our system doesn't do: don't say you'll stop emailing them, take them off a list, or follow up on a certain date. (If they ask to stop, use unsubscribe.) "I'd be glad to reconnect then" is fine.
 - Only these links may appear: ${DEMO_LINK_PLACEHOLDER}, Katie's Calendly (${CALENDLY_SCHEDULING_URL}), and https://peerteach.org. Write any of them as a plain URL. Never invent other addresses.
 - Output ONLY the email text. No notes, no reasoning, no labels like "Draft:", no talk about the teacher in the third person.
@@ -213,6 +237,15 @@ export function leadSchool(payload: InstantlyWebhookPayload): string {
   return String(
     payload['School/District Nickname'] || payload['school_name'] || payload.School || payload['district_name'] || payload['District Name'] || '',
   ).trim();
+}
+
+// Lead lists sometimes carry a nickname in the last name ('"Nikki" Diehm', 'Diehm (Nikki)').
+// Remy greets by the name on the link, so keep just the surname.
+export function cleanLastName(last: unknown): string {
+  return String(last || '')
+    .replace(/["“”][^"“”]*["“”]|\([^)]*\)/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function leadState(payload: InstantlyWebhookPayload): string {
@@ -274,9 +307,34 @@ function checkDraft(draft: string, senderFirst: string): string | null {
   return null;
 }
 
+// What the model reported through teacher_details, when the teacher's details differ from the lead.
+export interface TeacherDetails {
+  currentSchool?: string;
+  movedSchoolUnnamed?: boolean;
+  preferredFirstName?: string;
+}
+
 export interface DraftDeps {
   // Real link creation in production; a fake link in the replay script.
-  createDemoLink: () => Promise<string>;
+  createDemoLink: (details: TeacherDetails) => Promise<string>;
+}
+
+// The teacher's own words in the latest reply, without the quoted thread under it.
+function ownReplyText(payload: InstantlyWebhookPayload): string {
+  const t = String(payload.reply_text || payload.reply_text_snippet || '').replace(/\r/g, '');
+  const wrapped = t.search(/\n\s*On [^\n]{5,200}\n?[^\n]{0,200}wrote:/);
+  const out: string[] = [];
+  for (const line of (wrapped >= 0 ? t.slice(0, wrapped) : t).split('\n')) {
+    if (/^\s*>/.test(line) || /^\s*-{2,}\s*Original Message/i.test(line) || (/^\s*From:\s/.test(line) && out.length)) break;
+    out.push(line);
+  }
+  return out.join('\n').trim();
+}
+
+// A message that clearly needs an answer: a question, or more than a short closing line.
+// no_reply on one of these is the misfire seen live (Nikki Diehm, 11/9) and once in the replay.
+function needsAnswer(text: string): boolean {
+  return text.includes('?') || text.split(/\s+/).filter(Boolean).length > 25;
 }
 
 // Runs the model and returns a decision with any demo link already filled in. Sends nothing.
@@ -291,6 +349,9 @@ export async function draftTeacherReply(
   const messages: Anthropic.MessageParam[] = [{ role: 'user', content: buildContext(payload, thread, senderFirst) }];
 
   let result: TeacherResult | null = null;
+  const details: TeacherDetails = {};
+  const substantive = needsAnswer(ownReplyText(payload));
+  let reconsidered = false;
   for (let i = 0; i < MAX_ITERATIONS && !result; i++) {
     const response = await client.messages.create({
       model: TEACHER_MODEL,
@@ -298,6 +359,8 @@ export async function draftTeacherReply(
       output_config: { effort: 'medium' },
       system: [{ type: 'text', text: SYSTEM_PROMPT, cache_control: { type: 'ephemeral' } }],
       tools: TOOLS,
+      // One tool per turn: teacher_details must come back before the model writes or decides.
+      tool_choice: { type: 'auto', disable_parallel_tool_use: true },
       messages,
     });
     messages.push({ role: 'assistant', content: response.content });
@@ -307,7 +370,24 @@ export async function draftTeacherReply(
     } else if (response.stop_reason === 'tool_use') {
       const block = response.content.find((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
       const input = (block?.input ?? {}) as Record<string, any>;
-      if (block?.name === 'no_reply') {
+      const toolResult = (content: string) =>
+        messages.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: block!.id, content }] });
+      if (block?.name === 'teacher_details') {
+        const school = String(input.current_school || '').trim();
+        const first = String(input.preferred_first_name || '').trim();
+        if (school) details.currentSchool = school;
+        if (!school && input.moved_school_unnamed) details.movedSchoolUnnamed = true;
+        if (first) details.preferredFirstName = first;
+        toolResult('Noted. Their demo link will match. Now write your reply as usual (or call another tool if one fits).');
+      } else if (block?.name === 'no_reply' && !input.is_auto_ooo && substantive && !reconsidered) {
+        // Ask once more rather than going silent on a message that asks something or says a lot.
+        reconsidered = true;
+        toolResult(
+          "Not sent. Their message asks a question or says more than a closing line, so it almost certainly needs an answer. Reconsider: write the reply, or call another tool that fits. If you're still sure no email should go out, call escalate with your reason and your best draft, so a person decides.",
+        );
+      } else if (block?.name === 'no_reply' && !input.is_auto_ooo && substantive) {
+        result = { action: 'escalate', category: 'other', reason: `The agent chose not to reply to a message that seems to need an answer (${input.reason}). Please check.` };
+      } else if (block?.name === 'no_reply') {
         result = { action: input.is_auto_ooo ? 'ooo' : 'no_reply', reason: input.reason };
       } else if (block?.name === 'unsubscribe') {
         result = { action: 'unsubscribe', reason: input.reason };
@@ -353,7 +433,7 @@ export async function draftTeacherReply(
     // clicking Send on an escalation sends a real link too.
     if (result.draft!.includes(DEMO_LINK_PLACEHOLDER)) {
       try {
-        const url = await deps.createDemoLink();
+        const url = await deps.createDemoLink(details);
         result.demoLink = url;
         result.draft = result.draft!.split(DEMO_LINK_PLACEHOLDER).join(`[${url}](${url})`);
       } catch (err) {
@@ -387,16 +467,24 @@ export async function routeTeacherReply(payload: InstantlyWebhookPayload): Promi
     const senderFirst = accountFirst || getSenderIdentity(payload.email_account).firstName;
 
     const result = await draftTeacherReply(payload, thread, senderFirst, {
-      createDemoLink: async () =>
-        (
+      createDemoLink: async (details) => {
+        // A school the teacher named wins; if they moved without naming it, the district (still
+        // right for a move within the district, and better than greeting them by their old school).
+        const district = String(payload['district_name'] || payload['District Name'] || payload['District'] || '').trim();
+        const school = details.currentSchool || (details.movedSchoolUnnamed && district) || undefined;
+        const last = cleanLastName(payload.lastName);
+        const name = details.preferredFirstName ? [details.preferredFirstName, last].filter(Boolean).join(' ') : undefined;
+        return (
           await getOrCreateDemoLink({
             campaignId: payload.campaign_id,
             email: payload.lead_email,
-            name: [leadFirstName(payload), payload.lastName].filter(Boolean).join(' ').trim(),
+            name: [leadFirstName(payload), last].filter(Boolean).join(' ').trim(),
             school: leadSchool(payload),
             state: leadState(payload),
+            override: { school, name, savedSchool: details.currentSchool, savedFirstName: details.preferredFirstName },
           })
-        ).url,
+        ).url;
+      },
     });
     console.log(`[teacherAgent] action=${result.action} category=${result.category ?? '-'} link=${result.demoLink ? 'yes' : 'no'}`);
 

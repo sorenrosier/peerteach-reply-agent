@@ -342,6 +342,8 @@ export interface LeadLookup {
   lastName: string;
   // Times (epoch seconds) of emails this agent sent to the lead, from the agent_send_ts variable.
   agentSendStamps: number[];
+  // The lead's custom variables (state, persona, demo link fields...).
+  payload: Record<string, any>;
 }
 
 // Finds a lead by email with no campaign filter — for cases where we only know the email
@@ -367,6 +369,7 @@ export async function findLeadByEmailAnyCampaign(leadEmail: string): Promise<Lea
     firstName: String(match.first_name ?? match.payload?.firstName ?? ''),
     lastName: String(match.last_name ?? match.payload?.lastName ?? ''),
     agentSendStamps: parseSendStamps(match.payload?.[AGENT_SEND_VAR]),
+    payload: match.payload ?? {},
   };
 }
 

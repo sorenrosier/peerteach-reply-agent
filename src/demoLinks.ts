@@ -16,6 +16,13 @@ import { getLeadVariables, updateLeadVariables } from './instantly';
 const VAR_URL = 'demo_link';
 const VAR_TOKEN = 'demo_link_token';
 const VAR_EXPIRES = 'demo_link_expires_at';
+// Who the stored link greets (set on links made after 2026-11-09; older links don't have them).
+const VAR_LINK_SCHOOL = 'demo_link_school';
+const VAR_LINK_NAME = 'demo_link_name';
+// Corrections the teacher gave us (they moved schools, or go by another name), so a later
+// link uses them too.
+const VAR_CURRENT_SCHOOL = 'current_school';
+const VAR_NAME = 'demo_name';
 // Don't hand out a link that expires within this window — mint a fresh one instead.
 const MIN_DAYS_LEFT = 3;
 
@@ -38,6 +45,10 @@ export interface DemoVisitor {
   name: string;
   school: string;
   state: string;
+  // Set when the teacher's own words correct the lead's details. `school` / `name` are what the
+  // link should greet; `savedSchool` / `savedFirstName` are what to remember on the lead (a
+  // district stand-in for an unnamed new school isn't remembered, so a named one can replace it).
+  override?: { school?: string; name?: string; savedSchool?: string; savedFirstName?: string };
 }
 
 function apiUrl(): string {
@@ -73,8 +84,16 @@ async function stillUsable(token: string, storedExpiry: string | undefined): Pro
 // The lead's existing link if it's still good, otherwise a new one.
 export async function getOrCreateDemoLink(v: DemoVisitor): Promise<DemoLink> {
   const vars = await getLeadVariables(v.campaignId, v.email).catch(() => ({} as Record<string, string>));
+  const o = v.override || {};
+  const corrected = Boolean(o.school || o.name);
+  const school = o.school || vars[VAR_CURRENT_SCHOOL] || v.school;
+  const name = o.name || vars[VAR_NAME] || v.name;
+
+  // With a correction in this reply, only a link already made for that school and name will do;
+  // otherwise any stored link that still works (it was made with the best details we had).
   const storedToken = vars[VAR_TOKEN];
-  if (storedToken && (await stillUsable(storedToken, vars[VAR_EXPIRES]))) {
+  const matches = !corrected || (vars[VAR_LINK_SCHOOL] === school && vars[VAR_LINK_NAME] === name);
+  if (storedToken && matches && (await stillUsable(storedToken, vars[VAR_EXPIRES]))) {
     return { url: demoLinkUrl(storedToken), token: storedToken, expiresAt: vars[VAR_EXPIRES] || '', reused: true };
   }
 
@@ -82,12 +101,12 @@ export async function getOrCreateDemoLink(v: DemoVisitor): Promise<DemoLink> {
   if (!adminToken) throw new DemoLinkError('not_configured', 'PEERTEACH_ADMIN_TOKEN is not set');
 
   // The backend requires all three; state is optional (Remy asks if it's missing).
-  const missing = [!v.name && 'name', !v.email && 'email', !v.school && 'school'].filter(Boolean);
+  const missing = [!name && 'name', !v.email && 'email', !school && 'school'].filter(Boolean);
   if (missing.length) throw new DemoLinkError('missing_fields', `lead has no ${missing.join(', ')}`);
 
   const res = await axios.post(
     `${apiUrl()}/admin/ai-agents/links`,
-    { name: v.name, email: v.email, school: v.school, state: v.state, provider: 'openai' },
+    { name, email: v.email, school, state: v.state, provider: 'openai' },
     { headers: { Authorization: `Bearer ${adminToken}` }, timeout: 15000, validateStatus: () => true },
   );
   if (res.status !== 200 || !res.data?.success || !res.data?.token) {
@@ -100,6 +119,10 @@ export async function getOrCreateDemoLink(v: DemoVisitor): Promise<DemoLink> {
       [VAR_URL]: link.url,
       [VAR_TOKEN]: link.token,
       [VAR_EXPIRES]: link.expiresAt,
+      [VAR_LINK_SCHOOL]: school,
+      [VAR_LINK_NAME]: name,
+      ...(o.savedSchool ? { [VAR_CURRENT_SCHOOL]: o.savedSchool } : {}),
+      ...(o.savedFirstName && o.name ? { [VAR_NAME]: o.name } : {}),
     });
   } catch (err) {
     // The link exists and works either way; losing the record only means the next reply mints another.

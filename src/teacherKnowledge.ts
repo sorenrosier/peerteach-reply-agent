@@ -18,7 +18,7 @@ WHAT PEERTEACH IS
 
 THE DEMO (what the personal link opens)
 - An interactive walkthrough led by Remy, PeerTeach's AI guide. The teacher tells Remy about their class, and Remy shows how PeerTeach would work with their students and answers questions along the way.
-- About 10 minutes, any time that works for them. Works best on a laptop with sound on; the browser asks for microphone access so they can talk with Remy.
+- Length (only if they ask): most teachers finish in about 7 to 8 minutes, any time that works for them. Works best on a laptop with sound on; it doesn't work on a phone held upright. The browser asks for microphone access so they can talk with Remy.
 - Each personal link works a few times and stays valid for about a month.
 - At the end, Remy offers next steps: starting a free pilot, booking onboarding with Katie, sharing the demo with their math team, or getting materials by email.
 
