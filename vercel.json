@@ -8,7 +8,7 @@
     "api/cleanup-holds.ts": { "maxDuration": 60 },
     "api/send-reminders.ts": { "maxDuration": 60 },
     "api/sync-calendly-bookings.ts": { "maxDuration": 60 },
-    "api/send-followups.ts": { "maxDuration": 60 },
+    "api/send-followups.ts": { "maxDuration": 120 },
     "api/send-teacher-nudges.ts": { "maxDuration": 60 }
   },
   "crons": [

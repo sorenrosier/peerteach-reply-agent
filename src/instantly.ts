@@ -379,6 +379,73 @@ export function isAgentSendAt(stamps: number[], t: number): boolean {
   return stamps.some((s) => Math.abs(s - t) <= AGENT_SEND_MATCH_SECONDS);
 }
 
+export interface RecentEmail {
+  id: string;
+  t: number; // epoch seconds
+  ue: number; // 2 = received from the lead, 3 = manual/API reply from us
+  from: string;
+  eaccount: string;
+  lead: string;
+  campaignId: string;
+  subject: string;
+  html: string;
+  // Plain text of the message with the quoted earlier thread cut off.
+  text: string;
+}
+
+function plainText(raw: string): string {
+  const t = raw
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<br\s*\/?>|<\/p>|<\/div>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n\s*\n+/g, '\n')
+    .trim();
+  // Cut the quoted earlier thread ("On Wed, Nov 11 ... wrote:").
+  const cut = t.search(/\n?\s*On [^\n]{0,120}wrote:|\n\s*-{2,}\s*Original Message|\n\s*From:\s/i);
+  return (cut > 0 ? t.slice(0, cut) : t).trim().slice(0, 2000);
+}
+
+// Every manual-type email (our replies, ue_type 3, and the replies they answer, ue_type 2) created
+// since `sinceIso`, across all leads. Used to find emails that shared the Calendly link, and what
+// the lead said just before, without needing any other record.
+export async function listRecentEmails(sinceIso: string, maxPages = 12): Promise<RecentEmail[]> {
+  const out: RecentEmail[] = [];
+  let startingAfter: string | undefined;
+  for (let page = 0; page < maxPages; page++) {
+    const res = await instantlyRequest<{ items?: any[]; next_starting_after?: string }>({
+      method: 'GET',
+      url: '/emails',
+      params: { email_type: 'manual', min_timestamp_created: sinceIso, limit: 100, ...(startingAfter ? { starting_after: startingAfter } : {}) },
+    });
+    for (const e of res.items ?? []) {
+      if (e.ue_type !== 2 && e.ue_type !== 3) continue;
+      const raw = String(e.body?.html ?? e.body?.text ?? '');
+      out.push({
+        id: e.id,
+        t: new Date(e.timestamp_email).getTime() / 1000,
+        ue: e.ue_type as number,
+        from: String(e.from_address_email ?? '').toLowerCase(),
+        eaccount: String(e.eaccount ?? ''),
+        lead: String(e.lead ?? '').toLowerCase(),
+        campaignId: String(e.campaign_id ?? ''),
+        subject: String(e.subject ?? ''),
+        html: raw,
+        text: e.body?.text ? plainText(String(e.body.text)) : plainText(raw),
+      });
+    }
+    startingAfter = res.next_starting_after;
+    if (!startingAfter) break;
+    // The API allows ~20 requests a minute across everything; don't spend it all paging.
+    await new Promise((r) => setTimeout(r, 2500));
+  }
+  return out;
+}
+
 export interface SentEmail {
   id: string;
   t: number; // epoch seconds
@@ -388,32 +455,15 @@ export interface SentEmail {
   html: string;
 }
 
-// Every manual/API reply email (ue_type 3) sent since `sinceIso`, across all leads, newest page
-// first. Used to find emails that shared the Calendly link without needing any other record.
+// Our own manual/API replies only (ue_type 3). Used by the teacher nudges.
 export async function listRecentSentEmails(sinceIso: string, maxPages = 10): Promise<SentEmail[]> {
-  const out: SentEmail[] = [];
-  let startingAfter: string | undefined;
-  for (let page = 0; page < maxPages; page++) {
-    const res = await instantlyRequest<{ items?: any[]; next_starting_after?: string }>({
-      method: 'GET',
-      url: '/emails',
-      params: { email_type: 'manual', min_timestamp_created: sinceIso, limit: 100, ...(startingAfter ? { starting_after: startingAfter } : {}) },
-    });
-    for (const e of res.items ?? []) {
-      if (e.ue_type !== 3) continue;
-      out.push({
-        id: e.id,
-        t: new Date(e.timestamp_email).getTime() / 1000,
-        eaccount: String(e.eaccount ?? ''),
-        lead: String(e.lead ?? '').toLowerCase(),
-        campaignId: String(e.campaign_id ?? ''),
-        html: String(e.body?.html ?? e.body?.text ?? ''),
-      });
-    }
-    startingAfter = res.next_starting_after;
-    if (!startingAfter) break;
-  }
-  return out;
+  const all = await listRecentEmails(sinceIso, maxPages);
+  return all.filter((e) => e.ue === 3).map((e) => ({ id: e.id, t: e.t, eaccount: e.eaccount, lead: e.lead, campaignId: e.campaignId, html: e.html }));
+}
+
+// Sets custom variables on a lead we already have the id of (a lookup just done).
+export async function setLeadVariablesById(leadId: string, variables: Record<string, string>): Promise<void> {
+  await instantlyRequest({ method: 'PATCH', url: `/leads/${leadId}`, data: { custom_variables: variables } });
 }
 
 // Marks a lead as having booked a meeting (interest_value 2).
