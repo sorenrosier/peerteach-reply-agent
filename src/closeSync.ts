@@ -3,7 +3,7 @@ import { getAccessToken } from './googleCalendar';
 import { findLeadByEmailAnyCampaign, getCampaignName, LeadLookup } from './instantly';
 import { envOptional, SOREN_EMAIL } from './env';
 import { postInfoNote } from './slack';
-import { getSchoolStats, padNces, PRICE_PER_STUDENT, SchoolStats } from './schoolData';
+import { findSchoolInDistrict, getSchoolStats, padNces, PRICE_PER_STUDENT, SchoolStats } from './schoolData';
 import {
   CloseLead,
   closeErrorText,
@@ -84,7 +84,7 @@ function websiteFor(email: string): string | undefined {
 
 export interface CloseSyncOutcome {
   email: string;
-  action: 'created_lead' | 'added_to_existing_lead' | 'opportunity_added' | 'already_in_close' | 'would_create_lead' | 'would_add_to_existing_lead' | 'would_add_opportunity' | 'error';
+  action: 'created_lead' | 'added_to_existing_lead' | 'opportunity_added' | 'already_in_close' | 'would_create_lead' | 'would_add_to_existing_lead' | 'would_add_opportunity' | 'deferred' | 'error';
   leadId?: string;
   detail?: string;
 }
@@ -157,7 +157,8 @@ export async function runCloseSync(opts: { maxBookings?: number } = {}): Promise
       result.processed++;
       const outcomes = await syncBooking(booking);
       result.outcomes.push(...outcomes);
-      const failed = outcomes.some((o) => o.action === 'error');
+      // Errors and deferrals (public data didn't load) leave the event untagged for the next run.
+      const failed = outcomes.some((o) => o.action === 'error' || o.action === 'deferred');
       if (live && !failed) {
         try { await tagEvent(token, item.id, 'done'); } catch (err) { console.warn('[closeSync] tag failed:', closeErrorText(err)); }
       }
@@ -187,7 +188,7 @@ async function syncBooking(b: Booking): Promise<CloseSyncOutcome[]> {
   let firstLeadId: string | undefined;
   for (const { guest, lead } of leads) {
     try {
-      const o = await syncPerson(guest, lead);
+      const o = await syncPerson(guest, lead, b.start);
       outcomes.push(o);
       firstLeadId = firstLeadId || o.leadId;
     } catch (err) {
@@ -210,15 +211,38 @@ async function syncBooking(b: Booking): Promise<CloseSyncOutcome[]> {
   return outcomes;
 }
 
-async function syncPerson(guest: { email: string; name?: string }, lead: LeadLookup): Promise<CloseSyncOutcome> {
+// Public data sometimes fails to load (the API times out). Rather than create a record without
+// its numbers, wait for a later run unless the meeting is about to start.
+const DEFER_IF_MEETING_MORE_THAN_MS = 2 * 3600_000;
+function shouldDefer(stats: SchoolStats, schoolNces: string, meetingStart: string): boolean {
+  const key = schoolNces ? ['school directory', 'school grades 3-9'] : ['district grades 3-9'];
+  const gap = stats.missing.some((m) => key.includes(m));
+  const startMs = Date.parse(meetingStart);
+  return gap && Number.isFinite(startMs) && startMs - Date.now() > DEFER_IF_MEETING_MORE_THAN_MS;
+}
+
+async function syncPerson(guest: { email: string; name?: string }, lead: LeadLookup, meetingStart: string): Promise<CloseSyncOutcome> {
   const live = isLive();
   const p = lead.payload;
   const campaignName = (lead.campaignId && (await getCampaignName(lead.campaignId))) || '';
   const persona = personaFor(String(p.persona ?? p.Persona ?? ''), campaignName);
-  const name = [lead.firstName, lead.lastName].filter(Boolean).join(' ').trim() || guest.name || guest.email;
-  const schoolNces = padNces(p.nces_school_id ?? p['NCES School ID'], 12);
+  // The name they go by (set by the teacher agent when they sign differently), then the lead's.
+  const preferred = String(p.demo_name || '').trim();
+  const name = preferred || [lead.firstName, lead.lastName].filter(Boolean).join(' ').trim() || guest.name || guest.email;
+  let schoolNces = padNces(p.nces_school_id ?? p['NCES School ID'], 12);
   const districtNces = padNces(p.nces_district_id ?? p['NCES District ID'], 7) || (schoolNces ? schoolNces.slice(0, 7) : '');
   const channelDetails = campaignName ? `Campaign: ${campaignName}` : '';
+
+  // A teacher who told us they moved (the teacher agent saves current_school): use that school,
+  // found by name in their district. If it can't be found, the lead is named for it but carries
+  // only district data, never the old school's NCES ID or stats.
+  let schoolNameOverride: string | undefined;
+  const current = String(p.current_school || '').trim();
+  if (current && current.toLowerCase() !== String(p.school_name || '').trim().toLowerCase()) {
+    const found = await findSchoolInDistrict(districtNces, current);
+    schoolNces = found ? padNces(found.ncessch, 12) : '';
+    schoolNameOverride = found?.name || current;
+  }
 
   // 1. The person is already in Close.
   const byEmail = await findLeadByContactEmail(guest.email);
@@ -227,6 +251,7 @@ async function syncPerson(guest: { email: string; name?: string }, lead: LeadLoo
       return { email: guest.email, action: 'already_in_close', leadId: byEmail.lead.id };
     }
     const stats = await getSchoolStats(schoolNces, districtNces);
+    if (shouldDefer(stats, schoolNces, meetingStart)) return { email: guest.email, action: 'deferred', detail: `public data missing: ${stats.missing.join(', ')}` };
     if (!live) return { email: guest.email, action: 'would_add_opportunity', leadId: byEmail.lead.id, detail: oppSummary(stats, persona, campaignName) };
     await createOpportunity(await opportunityBody(byEmail.lead.id, byEmail.contactId, stats, persona, channelDetails));
     await note(`:card_index: Added a Demo Scheduled opportunity in Close for ${name} (${persona ?? 'persona unknown'}), who was already a contact`, byEmail.lead.id);
@@ -234,7 +259,8 @@ async function syncPerson(guest: { email: string; name?: string }, lead: LeadLoo
   }
 
   const stats = await getSchoolStats(schoolNces, districtNces);
-  const leadFields = await leadCustomFields(p, stats, schoolNces, districtNces, live);
+  if (shouldDefer(stats, schoolNces, meetingStart)) return { email: guest.email, action: 'deferred', detail: `public data missing: ${stats.missing.join(', ')}` };
+  const leadFields = await leadCustomFields(schoolNameOverride ? { ...p, 'School/District Nickname': schoolNameOverride } : p, stats, schoolNces, districtNces, live);
   const contact = await contactBody(name, guest.email, persona);
 
   // 2. The school is already in Close (by NCES, with or without leading zeros).
@@ -253,7 +279,7 @@ async function syncPerson(guest: { email: string; name?: string }, lead: LeadLoo
   }
 
   // 3. New school.
-  const schoolName = String(p.school_name || stats.schoolName || p['School/District Nickname'] || '').trim() || `${name}'s school`;
+  const schoolName = String(schoolNameOverride || p.school_name || stats.schoolName || p['School/District Nickname'] || '').trim() || `${name}'s school`;
   if (!live) return { email: guest.email, action: 'would_create_lead', detail: `${schoolName}; ${oppSummary(stats, persona, campaignName)}; fields ${JSON.stringify(leadFields)}; missing data: ${stats.missing.join(', ') || 'none'}` };
   const created = await createLead({
     name: schoolName,

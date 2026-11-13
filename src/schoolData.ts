@@ -118,6 +118,28 @@ async function elShare(idParam: string): Promise<string | undefined> {
   return all ? pct(el, all) : undefined;
 }
 
+// A school in a district by name (for a teacher who told us they moved schools within their
+// district). Matches ignoring case, punctuation and words like "school"/"elementary".
+export async function findSchoolInDistrict(districtNces: string, schoolName: string): Promise<{ ncessch: string; name: string } | null> {
+  const l = padNces(districtNces, 7);
+  if (!l || !schoolName.trim()) return null;
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\b(school|elementary|elem|el|es|middle|ms|high|hs|academy|the|of)\b/g, ' ').replace(/\s+/g, ' ').trim();
+  const want = norm(schoolName);
+  if (!want) return null;
+  for (const y of CCD_YEARS) {
+    try {
+      const schools = await getAll(`schools/ccd/directory/${y}/?leaid=${l}`);
+      if (!schools.length) continue;
+      const exact = schools.filter((x) => norm(String(x.school_name)) === want);
+      const hit = exact.length === 1 ? exact[0] : null;
+      return hit ? { ncessch: String(hit.ncessch), name: hit.school_name } : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 // Everything we can learn about a school and its district. Never throws: whatever failed is
 // listed in `missing`.
 export async function getSchoolStats(schoolNces: string, districtNces: string): Promise<SchoolStats> {
