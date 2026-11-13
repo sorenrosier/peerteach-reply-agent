@@ -126,7 +126,12 @@ export async function runCloseSync(opts: { maxBookings?: number } = {}): Promise
   const live = isLive();
   const t0 = Date.now();
   const result: CloseSyncResult = { mode: live ? 'live' : 'dry', events: 0, processed: 0, deferred: 0, outcomes: [] };
-  const maxBookings = opts.maxBookings ?? (live ? 3 : 2);
+  // A dry run tags nothing, so it would re-read the same first bookings every run. Instead each
+  // run in the hour takes a different slice of 12 (by quarter hour), covering ~48 bookings an
+  // hour without eating the Instantly rate limit the live agent shares (20 requests/minute).
+  const maxBookings = opts.maxBookings ?? (live ? 3 : 12);
+  const skipFirst = live ? 0 : Math.floor(new Date().getUTCMinutes() / 15) * 12;
+  let seen = 0;
 
   for (const calendarEmail of [undefined, SOREN_EMAIL]) {
     let token: string, items: any[];
@@ -145,6 +150,7 @@ export async function runCloseSync(opts: { maxBookings?: number } = {}): Promise
         .map((a) => ({ email: String(a.email).toLowerCase().trim(), name: a.displayName || undefined }));
       if (!guests.length) continue;
       result.events++;
+      if (seen++ < skipFirst) continue;
       if (result.processed >= maxBookings || Date.now() - t0 > RUN_BUDGET_MS) { result.deferred++; continue; }
 
       const booking: Booking = { calendarEmail, eventId: item.id, start: item.start?.dateTime || item.start?.date || '', guests };
@@ -170,8 +176,10 @@ async function syncBooking(b: Booking): Promise<CloseSyncOutcome[]> {
   const others: Booking['guests'] = [];
   for (const g of b.guests) {
     try {
+      // Pace Instantly lookups: the API's 20 requests/minute is shared with the live reply agent.
+      await new Promise((r) => setTimeout(r, 3000));
       const lead = await findLeadByEmailAnyCampaign(g.email);
-      if (lead) leads.push({ guest: g, lead }); else others.push(g);
+      if (lead) leads.push({ guest: g, lead }); else { others.push(g); console.log(`[closeSync] not an Instantly lead: ${g.email}`); }
     } catch (err) {
       outcomes.push({ email: g.email, action: 'error', detail: `Instantly lookup: ${closeErrorText(err)}` });
     }
