@@ -666,3 +666,13 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
 }
+
+// A campaign's name (for the CRM's "Channel Details"). null if it can't be read.
+export async function getCampaignName(campaignId: string): Promise<string | null> {
+  try {
+    const res = await instantlyRequest<{ name?: string }>({ method: 'GET', url: `/campaigns/${encodeURIComponent(campaignId)}` });
+    return res.name ?? null;
+  } catch {
+    return null;
+  }
+}

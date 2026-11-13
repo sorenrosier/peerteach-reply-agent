@@ -33,6 +33,9 @@ const OPTIONAL_VARS = [
   'TEACHER_AUTO_SEND_ENABLED',
   // Demo-link nudges send automatically unless this is 'false' (then they go to Slack for approval).
   'TEACHER_NUDGE_AUTO_SEND',
+  // Close CRM sync of booked calls (src/closeSync.ts). Writes only when CLOSE_SYNC_MODE=live.
+  'CLOSE_API_KEY',
+  'CLOSE_SYNC_MODE',
   'PEERTEACH_ADMIN_TOKEN',
   'PEERTEACH_API_URL',
 ] as const;
