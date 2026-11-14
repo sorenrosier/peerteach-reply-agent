@@ -6,6 +6,7 @@ import { deleteHoldsForLead, hasExistingHold, getHoldsForLead } from './googleCa
 import { envOptional, isAutoSendEnabled, isNewRuleAutoSendEnabled, isSorenBookingEnabled, SOREN_EMAIL } from './env';
 import { releaseDisplacedHolds, restoreDisplacedHolds, notifyDisplacedLeads } from './displacement';
 import { routeTeacherReply, isTeacherPersona } from './teacherAgent';
+import { flagBookingsForRecheck } from './calendlySync';
 import { renderLinks } from './linkFormat';
 import {
   postAgentDraft,
@@ -123,6 +124,10 @@ export async function routeReply(payload: InstantlyWebhookPayload): Promise<void
     console.log(`[router] duplicate delivery for email_id=${payload.email_id} — already processed, skipping`);
     return;
   }
+
+  // A reply makes Instantly relabel the lead "Interested", undoing "Meeting booked" for anyone
+  // who already booked. Flag their booking so the next calendar sweep marks it again. Never throws.
+  if (process.env.GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON) await flagBookingsForRecheck(payload.lead_email);
 
   // Branch to the teacher-facing system BEFORE any of the admin/principal-specific logic
   // below runs (holds, booking, the demo-scheduling agent). Only a lead whose Persona field

@@ -1,5 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
-import { env, isTeacherAutoSendEnabled, CALENDLY_SCHEDULING_URL } from './env';
+import { env, isTeacherAutoSendEnabled, TEACHER_CALENDLY_URL } from './env';
 import { ThreadEmail, computeGuestEmails, findLeakedMetaText, getSenderIdentity, getSchoolYearContext } from './agent';
 import { fetchEmailThread, replyToEmail, findRecentHumanReply, getAccountFirstName } from './instantly';
 import { getOrCreateDemoLink, DemoLinkError } from './demoLinks';
@@ -183,7 +183,7 @@ VOICE
 - Don't re-pitch or repeat what earlier emails in the thread already said.
 - Don't add urgency, scarcity, deadlines or discounts beyond what's already in the thread, except the one pilot-spots line in the standard reply, used once per thread.
 - Never promise something our system doesn't do: don't say you'll stop emailing them, take them off a list, or follow up on a certain date. (If they ask to stop, use unsubscribe.) "I'd be glad to reconnect then" is fine.
-- Only these links may appear: ${DEMO_LINK_PLACEHOLDER}, Katie's Calendly (${CALENDLY_SCHEDULING_URL}), and https://peerteach.org. Write any of them as a plain URL. Never invent other addresses.
+- Only these links may appear: ${DEMO_LINK_PLACEHOLDER}, Katie's Calendly (${TEACHER_CALENDLY_URL}), and https://peerteach.org. Write any of them as a plain URL. Never invent other addresses.
 - Output ONLY the email text. No notes, no reasoning, no labels like "Draft:", no talk about the teacher in the third person.
 
 FACTS
@@ -198,8 +198,8 @@ SITUATIONS
 - Question that implies interest: answer briefly from FACTS, then the link (standard reply shape).
 - Cost: only when asked, from PRICES; mention the free grant-funded pilot first if it hasn't come up.
 - Principal approval: the pilot needs a school leader's OK, and the demo gives them a ready-made approval email. Encourage them to start with the demo.
-- They did the demo, or want to get started: point them to booking onboarding with Katie at ${CALENDLY_SCHEDULING_URL}, and mention their principal's OK should be in before the onboarding call. Other math teachers are welcome to join.
-- They'd rather talk to a person than do the demo: that's fine, offer Katie's Calendly (${CALENDLY_SCHEDULING_URL}). You may also include the demo link as an option, once.
+- They did the demo, or want to get started: point them to booking onboarding with Katie at ${TEACHER_CALENDLY_URL}, and mention their principal's OK should be in before the onboarding call. Other math teachers are welcome to join.
+- They'd rather talk to a person than do the demo: that's fine, offer Katie's Calendly (${TEACHER_CALENDLY_URL}). You may also include the demo link as an option, once.
 - Misconception (they think we send tutors, or it's an after-school program): gently clarify that teachers run PeerTeach with their own students during class, then the link if they still sound interested. Not a correction, just matter-of-fact.
 - Not interested / not right now: thank them warmly in one or two sentences, no pitch, no link. If "not now" with a time ("maybe in the spring"), say you'd be glad to reconnect then.
 - Not a fit (doesn't teach math, or a grade/course we don't cover): thank them, say briefly who PeerTeach is for, no push. If they offer to pass it to a colleague without giving an email, thank them; they're welcome to forward this email.
@@ -301,7 +301,7 @@ function checkDraft(draft: string, senderFirst: string): string | null {
   if (leftover) return `contains an unfilled placeholder ("${leftover[0]}")`;
   for (const url of draft.match(/https?:\/\/[^\s)\]>]+/g) ?? []) {
     const u = url.replace(/[.,!?]+$/, '');
-    const ok = u.startsWith(CALENDLY_SCHEDULING_URL) || /^https?:\/\/(www\.)?peerteach\.org(\/[^\s]*)?$/i.test(u);
+    const ok = u.startsWith(TEACHER_CALENDLY_URL) || /^https?:\/\/(www\.)?peerteach\.org(\/[^\s]*)?$/i.test(u);
     if (!ok) return `contains a link that isn't allowed (${u})`;
   }
   return null;

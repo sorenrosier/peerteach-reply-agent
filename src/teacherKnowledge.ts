@@ -41,6 +41,8 @@ PAIRING AND THE CLASSROOM
 - Accommodations: read-aloud and untimed quizzes per student. Students can switch the screen between 25 languages. Calculator availability follows what state tests allow.
 - Teachers can't upload their own problems. Questions come in mild, medium and spicy difficulty.
 - AI: Mathy is the AI math tutor inside PeerTeach. AI features can be turned off for a whole school or a single teacher.
+- Listening to students (if asked how it knows who's talking): the main system most teachers use doesn't listen to students while they coach each other. A beta feature (Strengths Analysis) can analyze the conversation in real time to track each student's coaching strengths and reinforce strong coaching; it knows who's talking from a 30-second voice sample each student records when they first create their account.
+- Headphones: most teachers don't have students wear headphones during sessions. They can help in a few short moments along the way: chatting with Mathy for math help, practicing coaching moves, and teaching math to a virtual character.
 
 ENGLISH LEARNERS AND MULTILINGUAL CLASSROOMS
 - PeerTeach is designed with multilingual learners in mind. Math content and peer-coaching support are available in multiple languages (students can switch the screen between 25 languages), and students can be paired with classmates who speak their home language.
@@ -49,6 +51,7 @@ ENGLISH LEARNERS AND MULTILINGUAL CLASSROOMS
 
 SETUP, SUPPORT, DATA
 - Adding students: Google Classroom import, roster upload, or a join code. Students sign in with Google, Microsoft or Clever.
+- Our team (if asked who someone is): Katie Kaplan is our head of school partnerships. Dr. Soren Rosier is the learning scientist who developed PeerTeach at Stanford.
 - Onboarding: one call of about 30 to 45 minutes with Katie, our head of school partnerships and a former PeerTeach teacher herself: setting up the account, adding students, walking through a first session. Other math teachers at the school are welcome to join.
 - Support: a small, responsive team. Jackie reviews every session each morning and reaches out if something went wrong.
 - Data privacy: we regularly complete data privacy agreements with districts, and our team can help with that.

@@ -56,6 +56,9 @@ export const SOREN_ZOOM_URL = 'https://us06web.zoom.us/j/6388859556?pwd=Pimuxq3b
 // one, so it stays simple and anything self-booked here still shows up as busy time the
 // next time we compute availability.
 export const CALENDLY_SCHEDULING_URL = 'https://calendly.com/katie-peerteach/new-meeting';
+// Teachers get Katie's longer "PeerTeach Launch Call" (40 minutes): Katie expects teachers to
+// need more time than principals (2026-11-13). Same calendar, so bookings show up the same way.
+export const TEACHER_CALENDLY_URL = 'https://calendly.com/katie-peerteach/peerteach-launch-call';
 
 type RequiredVar = (typeof REQUIRED_VARS)[number];
 type OptionalVar = (typeof OPTIONAL_VARS)[number];

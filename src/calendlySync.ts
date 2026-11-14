@@ -44,7 +44,9 @@ export async function syncCalendlyBookingsToInstantly(): Promise<CalendlySyncRes
 
     for (const item of items) {
       if (item.status === 'cancelled') continue;
-      if (item.extendedProperties?.private?.instantly_meeting_sync) continue;
+      // 'done' events are finished; 'recheck' ones (the lead replied after booking, see
+      // flagBookingsForRecheck) go through again.
+      if (item.extendedProperties?.private?.instantly_meeting_sync === 'done') continue;
       if (item.extendedProperties?.private?.peerteach_hold) continue; // a hold isn't a real booking yet
 
       const attendeeEmails = ((item.attendees ?? []) as any[])
@@ -101,4 +103,41 @@ export async function syncCalendlyBookingsToInstantly(): Promise<CalendlySyncRes
     console.error('[calendlySync] sweep failed:', err instanceof Error ? err.message : String(err));
   }
   return result;
+}
+
+// A lead who has a booking replied by email. Instantly's automatic reply labeling then resets
+// them to "Interested", overwriting the "Meeting booked" this sync had set: Amanda Gage-Croll
+// booked at 18:27 on 2026-11-13, was marked booked, replied at 19:02 and was back to
+// Interested. Her event was already tagged 'done', so nothing put it back. Called on every
+// incoming reply: flags that lead's upcoming bookings 'recheck', so the next sweep (after
+// Instantly's relabel) marks them booked again. Returns how many bookings were flagged.
+// Never throws.
+export async function flagBookingsForRecheck(leadEmail: string): Promise<number> {
+  const want = leadEmail.toLowerCase().trim();
+  if (!want) return 0;
+  try {
+    const token = await getAccessToken();
+    const res = await axios.get('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+      headers: { Authorization: `Bearer ${token}` },
+      params: { timeMin: new Date().toISOString(), timeMax: new Date(Date.now() + 60 * 86400000).toISOString(), singleEvents: true, maxResults: 250, q: want },
+      timeout: 10000,
+    });
+    let flagged = 0;
+    for (const item of (res.data.items ?? []) as any[]) {
+      if (item.status === 'cancelled' || item.extendedProperties?.private?.peerteach_hold) continue;
+      if (item.extendedProperties?.private?.instantly_meeting_sync !== 'done') continue;
+      if (!((item.attendees ?? []) as any[]).some((a) => String(a?.email || '').toLowerCase() === want)) continue;
+      await axios.patch(
+        `https://www.googleapis.com/calendar/v3/calendars/primary/events/${item.id}`,
+        { extendedProperties: { private: { instantly_meeting_sync: 'recheck' } } },
+        { headers: { Authorization: `Bearer ${token}` }, timeout: 10000 },
+      );
+      flagged++;
+    }
+    if (flagged) console.log(`[calendlySync] ${leadEmail} replied after booking; flagged ${flagged} booking(s) to re-mark as booked`);
+    return flagged;
+  } catch (err) {
+    console.warn('[calendlySync] flagBookingsForRecheck failed:', err instanceof Error ? err.message : String(err));
+    return 0;
+  }
 }
