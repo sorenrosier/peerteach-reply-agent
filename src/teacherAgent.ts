@@ -13,7 +13,7 @@ import {
   postInfoNote,
   replySubject,
 } from './slack';
-import { TEACHER_FACTS, TEAM_FOLLOWS_UP } from './teacherKnowledge';
+import { TEACHER_FACTS, TEAM_FOLLOWS_UP, priceToQuote } from './teacherKnowledge';
 import { AgentResult, InstantlyWebhookPayload } from './types';
 
 // The teacher-facing reply system. Teachers get a cold email offering a personal link to
@@ -252,6 +252,24 @@ function leadState(payload: InstantlyWebhookPayload): string {
   return String(payload.State || payload['state'] || '').trim();
 }
 
+function linkAlreadySent(thread: ThreadEmail[]): boolean {
+  return thread.some((e) => e.isOutbound && e.body.includes('/ai-agents/demo'));
+}
+
+// Replies up to and including the one that sends the demo link go out on their own: the team
+// checked those and they look good (Soren, 2026-11-18). Once a teacher has their link, their
+// questions still go to Slack for approval. A reply counts as before the link only when we can
+// see our own outreach in the thread (so a failed thread fetch can't make it look like one) and
+// no link has been made for the lead yet (demo_link on the lead covers a link sent in an email
+// the fetch missed). TEACHER_AUTO_SEND_ENABLED=true still sends every draft.
+export function canAutoSend(payload: InstantlyWebhookPayload, thread: ThreadEmail[]): boolean {
+  if (isTeacherAutoSendEnabled()) return true;
+  if (process.env.TEACHER_PRE_LINK_AUTO_SEND === 'off') return false;
+  if (!thread.some((e) => e.isOutbound)) return false;
+  if (String(payload['demo_link'] || '').trim()) return false;
+  return !linkAlreadySent(thread);
+}
+
 function buildContext(payload: InstantlyWebhookPayload, thread: ThreadEmail[], senderFirst: string): string {
   const now = new Date();
   // With the time and zone, and a note that thread timestamps are UTC: a reply sent at 9pm
@@ -263,11 +281,12 @@ function buildContext(payload: InstantlyWebhookPayload, thread: ThreadEmail[], s
   }).format(now);
   const first = leadFirstName(payload);
   const name = [first, payload.lastName].filter(Boolean).join(' ') || '(name unknown)';
-  const linkSent = thread.some((e) => e.isOutbound && e.body.includes('/ai-agents/demo'));
+  const linkSent = linkAlreadySent(thread);
 
   let ctx = `YOU ARE: ${senderFirst}. Sign off exactly as "-${senderFirst}".\n`;
   ctx += `NOW: ${today} (timestamps in the thread below are UTC)\nSCHOOL YEAR: ${getSchoolYearContext(now)}\n`;
   ctx += `TEACHER: ${name}${first ? ` (first name: ${first})` : ''}, ${payload.Role || 'teacher'} at ${leadSchool(payload) || 'unknown school'}${leadState(payload) ? `, ${leadState(payload)}` : ''}\n`;
+  ctx += `PRICE TO QUOTE (only if they ask about cost): ${priceToQuote(now)}\n`;
   ctx += `DEMO LINK ALREADY SENT IN THIS THREAD: ${linkSent ? 'yes' : 'no'}\n\n`;
   ctx += `--- EMAIL THREAD (oldest first) ---\n\n`;
   if (thread.length) {
@@ -514,7 +533,7 @@ export async function routeTeacherReply(payload: InstantlyWebhookPayload): Promi
         );
         return;
       case 'draft': {
-        if (!isTeacherAutoSendEnabled()) {
+        if (!canAutoSend(payload, thread)) {
           await postAgentDraft(payload, asAgentResult, ':apple: Teacher reply — needs approval');
           return;
         }

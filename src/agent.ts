@@ -4,6 +4,7 @@ import { getAvailableTimes, bookMeeting } from './calendly';
 import { getSorenAvailableTimes } from './sorenBooking';
 import { getBusyMeetings, wouldExceedConsecutiveMeetings, createHold, findLeadBookingAt, findSlotConflicts } from './googleCalendar';
 import { InstantlyWebhookPayload, DisplacedHold } from './types';
+import { pricePeriod } from './teacherKnowledge';
 
 export type BookingHost = 'katie' | 'soren';
 
@@ -193,6 +194,20 @@ export function getSenderIdentity(emailAccount: string): { firstName: string; si
 
 // Returns the current phase of the US school year plus natural language guidance,
 // derived from the current month so the agent's seasonal references are always accurate.
+// The direct-price answer follows the date (see pricePeriod): starting midyear is prorated.
+function principalPriceAnswer(now: Date): string {
+  const p = pricePeriod(now);
+  if (p.kind === 'prorated') {
+    return `give the real number, don't defer it to the call. Starting now is prorated, so say it's about $${p.perStudent} per student for the rest of this school year (for example: "Since we'd be starting partway through the year, it's prorated: about $${p.perStudent} per student for the rest of this school year."). Never quote a full-year price or range.`;
+  }
+  if (p.kind === 'no_numbers') {
+    return "don't give numbers this late in the school year. Say the cost depends on timing and the number of students, and that you'll work it out together on the call.";
+  }
+  return `give the real number, don't defer it to the call:
+  "PeerTeach is priced as an annual per-student license, based on the number of students included in the rollout. Our standard range is typically $14 to $24 per student per year, depending on volume."
+  (Write it as "$14 to $24," not "$14–$24" — a dash there gets stripped to a comma by the no-em-dash voice rule below and reads as a typo.)`;
+}
+
 export function getSchoolYearContext(now: Date): string {
   const month = now.getMonth(); // 0 = Jan, 5 = Jun, 7 = Aug, 8 = Sep
   const day = now.getDate();
@@ -316,10 +331,8 @@ PRICING / "IS IT FREE?" HANDLING:
 
   If AUDIENCE is unknown, default to the TEACHER framing (matches current baseline behavior) unless something else in the thread clearly signals a school-level role (e.g. they sign as "Principal," reference district-wide decisions, mention budget/procurement).
 
-- If asked a more DIRECT question about the actual per-student price — not just "is it free," but something like "what does it cost per student," "what's your pricing," "how much after the pilot," "what would this run our district" — give the real number, don't defer it to the call:
-  "PeerTeach is priced as an annual per-student license, based on the number of students included in the rollout. Our standard range is typically $14 to $24 per student per year, depending on volume."
-  (Write it as "$14 to $24," not "$14–$24" — a dash there gets stripped to a comma by the no-em-dash voice rule below and reads as a typo.)
-  If the pilot being grant-funded and free hasn't come up yet in the thread, mention that too. Still offer the call as the natural next step for a more specific quote — but never withhold the actual range once someone asks for it directly.
+- If asked a more DIRECT question about the actual per-student price — not just "is it free," but something like "what does it cost per student," "what's your pricing," "how much after the pilot," "what would this run our district" — ${principalPriceAnswer(now)}
+  If the pilot being grant-funded and free hasn't come up yet in the thread, mention that too. Still offer the call as the natural next step for a more specific quote — but never withhold the actual price once someone asks for it directly (unless the guidance above says to give no numbers).
 
 CURRENT DATE/TIME: ${dateTimeStr}
 TODAY (ISO): ${todayIso}

@@ -66,10 +66,8 @@ THE FREE PILOT
 - After the pilot, if the school wants to continue, there's a per-student cost for the rest of the school year.
 
 PRICES (share only when they ask about cost)
-- Per student for the full school year, training and coaching included, prorated when starting partway through the year (usual after a pilot):
-  - Under 200 students: $24 per student
-  - 200 to 499 students: $21 per student
-  - 500 or more students: $18 per student
+- What to quote depends on today's date: use the PRICE TO QUOTE line above the thread, exactly as it says. Never quote any other per-student numbers.
+- The price covers training and coaching, for the rest of the school year after the free pilot.
 - District-wide adoption costs less; that's worked out with the district (no number).
 - Usually the school pays. Some teachers use classroom budget; mention only if asked.
 - Pricing has stayed the same for several years. Never offer discounts, promotions or deadlines.
@@ -82,7 +80,38 @@ export const TEAM_FOLLOWS_UP = `
 - District contracts, purchasing and paperwork details
 - Whether other schools in their district use PeerTeach, or anything about a specific named school
 - Security details beyond "we regularly complete data privacy agreements"
-- Exact quotes beyond the per-student tiers above
+- Exact quotes beyond the PRICE TO QUOTE line
 - Study details beyond what FACTS says about the English Learner trial
 - Anything not covered in FACTS
 `.trim();
+
+
+// What we say about cost depends on when we're emailing (Soren, 2026-11-18): starting partway
+// through the year is prorated, so the full-year prices would overstate it. Nov 15 to Jan 15:
+// about $12 per student for the rest of the year; Jan 16 to Feb 28/29: about $8; Mar 1 to
+// Jun 30: no numbers (worked out on a call); from Jul 1: the full-year prices. Dates are
+// Eastern, like the NOW line in the context. Used by the teacher and principal agents.
+export type PricePeriod = { kind: 'prorated'; perStudent: number } | { kind: 'no_numbers' } | { kind: 'full_year' };
+
+export function pricePeriod(now: Date): PricePeriod {
+  const [m, d] = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'numeric', day: 'numeric' })
+    .format(now)
+    .split('/')
+    .map(Number);
+  const md = m * 100 + d; // e.g. Nov 15 = 1115
+  if (md >= 1115 || md <= 115) return { kind: 'prorated', perStudent: 12 };
+  if (md <= 229) return { kind: 'prorated', perStudent: 8 };
+  if (md < 701) return { kind: 'no_numbers' };
+  return { kind: 'full_year' };
+}
+
+export function priceToQuote(now: Date): string {
+  const p = pricePeriod(now);
+  if (p.kind === 'prorated') {
+    return `Starting now means a prorated price: about $${p.perStudent} per student for the rest of this school year. Say it that way ("about $${p.perStudent} per student for the rest of the year"); never quote a full-year price.`;
+  }
+  if (p.kind === 'no_numbers') {
+    return "Give no price numbers this late in the school year. Say the cost depends on timing and the number of students, and that we'll work it out together when we talk (Katie's Calendly).";
+  }
+  return 'Per student for the full school year: under 200 students $24, 200 to 499 students $21, 500 or more $18.';
+}
