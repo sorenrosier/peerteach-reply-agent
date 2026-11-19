@@ -590,13 +590,11 @@ export interface ThreadEmail {
 
 // Fetches the email thread for a lead. Falls back to empty array on any error.
 // Our own sent emails come back from Instantly with only an HTML body (body.html, no
-// body.text), so without opts.htmlFallback they are dropped by the empty-body filter below and
-// the thread holds only the lead's messages. The teacher agent passes htmlFallback (it needs to
-// see our outreach to decide on auto-send); the admin agent still gets the old inbound-only view.
+// body.text). Before 2026-11-19 they were dropped by the empty-body filter below, so the agents
+// only ever saw the lead's messages; now the HTML is turned into text.
 export async function fetchEmailThread(
   campaignId: string,
   leadEmail: string,
-  opts: { htmlFallback?: boolean } = {},
 ): Promise<ThreadEmail[]> {
   try {
     const res = await instantlyRequest<{ items?: any[]; data?: any[] }>({
@@ -644,7 +642,7 @@ export async function fetchEmailThread(
         return {
           body: (
             e.body?.text || e.text || e.reply_text || e.email_text ||
-            (opts.htmlFallback && typeof e.body?.html === 'string' ? htmlToText(e.body.html) : '')
+            (typeof e.body?.html === 'string' ? htmlToText(e.body.html) : '')
           ).trim(),
           timestamp: e.timestamp ?? e.timestamp_email ?? e.created_at ?? e.date_created ?? '',
           isOutbound,
