@@ -18,7 +18,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     return;
   }
   try {
-    const result = await runCloseSync();
+    // ?skip=N (dry runs only): start at the Nth booking, to review every slice by hand.
+    const skip = Number(req.query.skip);
+    const result = await runCloseSync(Number.isFinite(skip) && skip >= 0 ? { skipFirst: skip } : {});
     res.status(200).json({ ok: true, ...result });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

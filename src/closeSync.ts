@@ -45,6 +45,9 @@ const OWN_DOMAINS = /@(peerteach\.org|[a-z0-9-]*peerteach[a-z0-9-]*\.[a-z.]+)$/i
 const FREE_MAIL = /@(gmail|yahoo|hotmail|outlook|icloud|aol|live|msn|me|comcast|protonmail)\./i;
 // Time budget: stop starting new bookings after this, so the run finishes inside its limit.
 const RUN_BUDGET_MS = 70_000;
+// Meetings this far back still get synced (widened from 3 to 8 days at go-live, 2026-11-19, so
+// the past week's bookings are caught; already-synced events are tagged and skipped).
+const LOOKBACK_DAYS = 8;
 
 export const isLive = () => envOptional('CLOSE_SYNC_MODE') === 'live';
 
@@ -108,7 +111,7 @@ async function listBookings(calendarEmail?: string): Promise<{ token: string; it
   const token = await getAccessToken(calendarEmail);
   const res = await axios.get('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
     headers: { Authorization: `Bearer ${token}` },
-    params: { timeMin: new Date(Date.now() - 3 * 86400000).toISOString(), timeMax: new Date(Date.now() + 60 * 86400000).toISOString(), singleEvents: true, maxResults: 250 },
+    params: { timeMin: new Date(Date.now() - LOOKBACK_DAYS * 86400000).toISOString(), timeMax: new Date(Date.now() + 60 * 86400000).toISOString(), singleEvents: true, maxResults: 250 },
     timeout: 15000,
   });
   return { token, items: res.data.items ?? [] };
@@ -122,7 +125,7 @@ async function tagEvent(token: string, eventId: string, value: string): Promise<
   );
 }
 
-export async function runCloseSync(opts: { maxBookings?: number } = {}): Promise<CloseSyncResult> {
+export async function runCloseSync(opts: { maxBookings?: number; skipFirst?: number } = {}): Promise<CloseSyncResult> {
   const live = isLive();
   const t0 = Date.now();
   const result: CloseSyncResult = { mode: live ? 'live' : 'dry', events: 0, processed: 0, deferred: 0, outcomes: [] };
@@ -130,7 +133,7 @@ export async function runCloseSync(opts: { maxBookings?: number } = {}): Promise
   // run in the hour takes a different slice of 12 (by quarter hour), covering ~48 bookings an
   // hour without eating the Instantly rate limit the live agent shares (20 requests/minute).
   const maxBookings = opts.maxBookings ?? (live ? 3 : 12);
-  const skipFirst = live ? 0 : Math.floor(new Date().getUTCMinutes() / 15) * 12;
+  const skipFirst = live ? 0 : opts.skipFirst ?? Math.floor(new Date().getUTCMinutes() / 15) * 12;
   let seen = 0;
 
   for (const calendarEmail of [undefined, SOREN_EMAIL]) {
