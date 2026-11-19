@@ -24,7 +24,7 @@ THE DEMO (what the personal link opens)
 - At the end, Remy offers next steps: starting a free pilot, booking onboarding with Katie, sharing the demo with their math team, or getting materials by email.
 
 FIT AND TIMING
-- Grades and courses: 3rd through 8th grade, Algebra 1, Integrated Math 1 and high school geometry. The high school courses are available for most states; if theirs isn't covered, our team confirms.
+- Grades and courses: math for grades 3 through 10. When summarizing who it's for, say "math classes in grades 3 through 10", never "3rd through 8th grade". The detail, if they ask about a specific course: every grade 3 to 8 math course, plus Algebra 1, Integrated Math 1 and high school geometry. The high school courses are available for most states; if theirs isn't covered, our team confirms.
 - Standards: aligned to the standards of 37 states, plus Illustrative Math, Eureka and Eureka Squared. Everyone else uses their state's standards, which works alongside any curriculum. Teachers can preview every question for a topic.
 - Sessions run 20 to 40 minutes depending on the session type. Most teachers run a full session about once a week; others replace independent practice with short Daily Practice sessions several times a week.
 - Session types: full sessions, Daily Practice (shorter), test prep (several topics), and MyQuest for independent practice.
