@@ -247,18 +247,14 @@ async function syncPerson(guest: { email: string; name?: string }, lead: LeadLoo
     schoolNameOverride = found?.name || current;
   }
 
-  // 1. The person is already in Close.
+  // 1. The person is already in Close: leave their lead alone, whatever its opportunities say.
+  // A closed one may be a decision Katie made (Do Not Contact, nurture), and the booking may not
+  // be a demo at all (a study debrief, a check-in). Found 2026-11-19: ROE #12 and South Range
+  // would otherwise have been given a fresh Demo Scheduled opportunity.
   const byEmail = await findLeadByContactEmail(guest.email);
   if (byEmail) {
-    if (byEmail.lead.opportunities.some((o) => o.status_type === 'active')) {
-      return { email: guest.email, action: 'already_in_close', leadId: byEmail.lead.id };
-    }
-    const stats = await getSchoolStats(schoolNces, districtNces);
-    if (shouldDefer(stats, schoolNces, meetingStart)) return { email: guest.email, action: 'deferred', detail: `public data missing: ${stats.missing.join(', ')}` };
-    if (!live) return { email: guest.email, action: 'would_add_opportunity', leadId: byEmail.lead.id, detail: oppSummary(stats, persona, campaignName) };
-    await createOpportunity(await opportunityBody(byEmail.lead.id, byEmail.contactId, stats, persona, channelDetails));
-    await note(`:card_index: Added a Demo Scheduled opportunity in Close for ${name} (${persona ?? 'persona unknown'}), who was already a contact`, byEmail.lead.id);
-    return { email: guest.email, action: 'opportunity_added', leadId: byEmail.lead.id };
+    const active = byEmail.lead.opportunities.some((o) => o.status_type === 'active');
+    return { email: guest.email, action: 'already_in_close', leadId: byEmail.lead.id, ...(active ? {} : { detail: 'no active opportunity; left as is' }) };
   }
 
   const stats = await getSchoolStats(schoolNces, districtNces);
