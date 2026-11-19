@@ -10,6 +10,7 @@
     "api/sync-calendly-bookings.ts": { "maxDuration": 60 },
     "api/send-followups.ts": { "maxDuration": 120 },
     "api/send-teacher-nudges.ts": { "maxDuration": 60 },
+    "api/send-remy-followups.ts": { "maxDuration": 120 },
     "api/sync-close.ts": { "maxDuration": 120 }
   },
   "crons": [
@@ -18,6 +19,7 @@
     { "path": "/api/sync-calendly-bookings", "schedule": "*/15 * * * *" },
     { "path": "/api/send-followups", "schedule": "20 * * * *" },
     { "path": "/api/send-teacher-nudges", "schedule": "40 * * * *" },
+    { "path": "/api/send-remy-followups", "schedule": "45 12-22 * * 1-5" },
     { "path": "/api/sync-close", "schedule": "5,20,35,50 * * * *" }
   ]
 }
