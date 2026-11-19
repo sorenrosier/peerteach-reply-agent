@@ -25,7 +25,8 @@ import { isSchoolHours } from './teacherNudges';
 // since the demo (they wrote to us, or a teammate did). The remy_followup lead variable
 // records the follow-up, so each teacher gets at most one.
 //
-// Goes to Slack for approval unless REMY_FOLLOWUP_AUTO_SEND=true. Waits for school hours in
+// Sends automatically (Soren's call, 2026-11-19); REMY_FOLLOWUP_AUTO_SEND=false sends them to
+// Slack for approval instead. Waits for school hours in
 // the teacher's state, like the demo-link nudge; the cron only runs on weekdays from 12:45 to
 // 22:45 UTC (school hours somewhere in the US), to spare Instantly's rate limit.
 
@@ -197,14 +198,14 @@ async function followUpFor(email: string, calls: CallSummary[], hoursSince: numb
 
   if (previewSink) {
     const when = schoolHours ? '' : ' (once it is school hours there)';
-    previewSink.push(`--- would ${envOptional('REMY_FOLLOWUP_AUTO_SEND') === 'true' ? 'send' : 'queue for approval'}${when} to ${email}. ${why}\n${draft}`);
+    previewSink.push(`--- would ${envOptional('REMY_FOLLOWUP_AUTO_SEND') !== 'false' ? 'send' : 'queue for approval'}${when} to ${email}. ${why}\n${draft}`);
     return 'queued';
   }
 
   // Recorded first, so a failure later in this run can't lead to a second email.
   await setLeadVariablesById(lead.id, { [STAMP_VAR]: `${new Date().toISOString()} call ${calls[calls.length - 1].id} ${kind.kind}` });
 
-  if (envOptional('REMY_FOLLOWUP_AUTO_SEND') === 'true') {
+  if (envOptional('REMY_FOLLOWUP_AUTO_SEND') !== 'false') {
     const rendered = renderLinks(draft);
     await replyToEmail({
       reply_to_uuid: inbound.id,

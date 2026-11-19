@@ -480,7 +480,7 @@ export async function routeTeacherReply(payload: InstantlyWebhookPayload): Promi
   console.log(`[teacherAgent] lead=${payload.lead_email} campaign=${payload.campaign_id}`);
   try {
     const [thread, accountFirst] = await Promise.all([
-      fetchEmailThread(payload.campaign_id, payload.lead_email),
+      fetchEmailThread(payload.campaign_id, payload.lead_email, { htmlFallback: true }),
       getAccountFirstName(payload.email_account),
     ]);
     const senderFirst = accountFirst || getSenderIdentity(payload.email_account).firstName;

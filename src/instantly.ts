@@ -589,9 +589,14 @@ export interface ThreadEmail {
 }
 
 // Fetches the email thread for a lead. Falls back to empty array on any error.
+// Our own sent emails come back from Instantly with only an HTML body (body.html, no
+// body.text), so without opts.htmlFallback they are dropped by the empty-body filter below and
+// the thread holds only the lead's messages. The teacher agent passes htmlFallback (it needs to
+// see our outreach to decide on auto-send); the admin agent still gets the old inbound-only view.
 export async function fetchEmailThread(
   campaignId: string,
   leadEmail: string,
+  opts: { htmlFallback?: boolean } = {},
 ): Promise<ThreadEmail[]> {
   try {
     const res = await instantlyRequest<{ items?: any[]; data?: any[] }>({
@@ -637,7 +642,10 @@ export async function fetchEmailThread(
             ? !!(e.is_sent ?? e.is_outbound)
             : !!(eaccount && from === eaccount);
         return {
-          body: (e.body?.text ?? e.text ?? e.reply_text ?? e.email_text ?? '').trim(),
+          body: (
+            e.body?.text || e.text || e.reply_text || e.email_text ||
+            (opts.htmlFallback && typeof e.body?.html === 'string' ? htmlToText(e.body.html) : '')
+          ).trim(),
           timestamp: e.timestamp ?? e.timestamp_email ?? e.created_at ?? e.date_created ?? '',
           isOutbound,
           from,
@@ -656,6 +664,25 @@ export async function fetchEmailThread(
     );
     return [];
   }
+}
+
+// Plain text from an email's HTML body: line breaks for block ends, tags dropped, the common
+// entities decoded. Links keep their visible text (our links show the URL itself).
+export function htmlToText(html: string): string {
+  return html
+    .replace(/<(style|script|title|head)[^>]*>[\s\S]*?<\/\1>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|tr|h[1-6]|blockquote)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&#x27;|&apos;/g, "'")
+    .replace(/&amp;/g, '&')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 function escapeHtml(s: string): string {

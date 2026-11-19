@@ -16,7 +16,8 @@ import { renderLinks } from './linkFormat';
 // Sends automatically (Soren's call, 2026-11-10). TEACHER_NUDGE_AUTO_SEND=false sends them to
 // Slack for approval instead.
 
-const NUDGE_AFTER_HOURS = 48;
+// 24 hours since 2026-11-19 (Soren); was 48.
+const NUDGE_AFTER_HOURS = 24;
 // Long enough to carry a weekend (Friday's link reaches Monday 8am at about 68 hours).
 const NUDGE_WINDOW_END_HOURS = 120;
 const DEMO_LINK_MARKER = '/ai-agents/demo?link=';
@@ -90,7 +91,7 @@ export async function runTeacherNudges(opts: { dryRun?: boolean } = {}): Promise
   const nowSec = Date.now() / 1000;
   const sent = await listRecentSentEmails(new Date((nowSec - (NUDGE_WINDOW_END_HOURS + 4) * 3600) * 1000).toISOString());
 
-  // The latest demo-link email per lead, 48 to 120 hours old.
+  // The latest demo-link email per lead, 24 to 120 hours old.
   const latest = new Map<string, SentEmail>();
   for (const e of sent) {
     if (!e.lead || !e.html.includes(DEMO_LINK_MARKER) || e.html.includes(NUDGE_MARKER)) continue;
