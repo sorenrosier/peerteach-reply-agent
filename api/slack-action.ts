@@ -2,12 +2,12 @@ import type { VercelRequest, VercelResponse } from '@vercel/node';
 import { waitUntil } from '@vercel/functions';
 import crypto from 'crypto';
 import { env, envOptional, validateEnv, SOREN_EMAIL } from '../src/env';
-import { replyToEmail } from '../src/instantly';
+import { replyToEmail, claimCardSend } from '../src/instantly';
 import { bookMeeting } from '../src/calendly';
 import { bookSorenMeeting } from '../src/sorenBooking';
 import { deleteHoldsForLead, updateEventReminderStatus } from '../src/googleCalendar';
 import { renderLinks } from '../src/linkFormat';
-import { updateViaResponseUrl } from '../src/slack';
+import { updateViaResponseUrl, notifyClickerViaResponseUrl } from '../src/slack';
 import { releaseDisplacedHolds, restoreDisplacedHolds, notifyDisplacedLeads } from '../src/displacement';
 import { SendReplyButtonValue, SlackActionPayload } from '../src/types';
 
@@ -167,6 +167,33 @@ export async function processAction(
         );
         return;
       }
+      // Claim this card BEFORE booking or sending, so a double click, or a click from a Slack
+      // client still showing the old buttons, can't book or send twice. Keyed on the button's
+      // own value, so a different card replying to the same email (e.g. a reminder) isn't blocked.
+      const cardKey = crypto.createHash('sha256').update(action.value).digest('hex').slice(0, 16);
+      const claim = await claimCardSend(parsed.campaign_id, parsed.lead_email, cardKey);
+      if (claim.status === 'already_claimed') {
+        const when = new Date(claim.at * 1000).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/Los_Angeles' });
+        console.warn(`[slack-action] duplicate Send ignored for ${parsed.lead_email} card=${cardKey} (claimed ${claim.at})`);
+        await notifyClickerViaResponseUrl(
+          payload.response_url,
+          `:information_source: Already sent (or sending) for ${parsed.lead_email}, approved at ${when} PT. This click was ignored. If the lead didn't get it, send from Unibox.`,
+        );
+        return;
+      }
+      if (claim.status === 'error') {
+        console.warn(`[slack-action] send claim failed for ${parsed.lead_email} card=${cardKey}: ${claim.reason}`);
+        await notifyClickerViaResponseUrl(
+          payload.response_url,
+          `:warning: Couldn't confirm this reply wasn't already sent (${claim.reason}). Nothing was sent. Click Send again in a minute, or send from Unibox.`,
+        );
+        return;
+      }
+      const clickerTag = payload.user?.id ? `<@${payload.user.id}>` : 'a teammate';
+      await updateViaResponseUrl(
+        payload.response_url,
+        `:hourglass_flowing_sand: Sending to ${parsed.lead_email}… (approved at ${now} by ${clickerTag})`,
+      );
       // Book the meeting FIRST (only happens on this affirmative Send — never on Skip).
       // If booking fails (e.g. the slot was taken since the draft was created), do NOT send
       // the confirmation reply — surface the failure so a human can handle it.

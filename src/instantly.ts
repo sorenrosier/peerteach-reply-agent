@@ -1,4 +1,5 @@
 import axios, { AxiosError, AxiosRequestConfig } from 'axios';
+import crypto from 'crypto';
 import { env } from './env';
 
 const BASE_URL = 'https://api.instantly.ai/api/v2';
@@ -132,6 +133,75 @@ export async function recordAgentSend(campaign_id: string, lead_email: string): 
     });
   } catch (err) {
     console.warn('[instantly] recordAgentSend failed (email was sent):', err instanceof Error ? err.message : String(err));
+  }
+}
+
+// Guards a Slack "Send" button against sending the same card twice. A real incident
+// (2026-11-16): one teacher card was sent 5 times in 70s, and another twice. Each click is its own
+// request, double clicks land 138ms apart, and a stale Slack client kept showing the buttons
+// after the card had been replaced, so updating the card alone can't stop it.
+//
+// There's no database, so the record is a lead variable: the last few claims, comma-separated,
+// each `cardKey:token:epochSeconds`. Lead variables are read-then-write, not atomic, so a plain
+// "already claimed?" check would let two near-simultaneous clicks both through. Instead: write
+// our claim, wait for any racing click's write to land, read back, and only proceed if OUR token
+// is the one that stuck (last write wins, so exactly one racer sees its own token). Not
+// airtight: a click whose read lands before ours is written AND whose write lands after our
+// read-back (more than SEND_CLAIM_SETTLE_MS later) would still get through.
+//
+// Fails CLOSED, unlike the other guards here: a person is looking at the card and can click
+// again or send from Unibox, while a duplicate email to a lead can't be taken back.
+const SEND_CLAIMS_VAR = 'slack_send_claims';
+const SEND_CLAIMS_KEEP = 10;
+const SEND_CLAIM_SETTLE_MS = 1500;
+
+export type CardSendClaim =
+  | { status: 'claimed' }
+  | { status: 'already_claimed'; at: number }
+  | { status: 'error'; reason: string };
+
+function parseSendClaims(raw: unknown): Array<{ key: string; token: string; at: number }> {
+  return String(raw ?? '')
+    .split(',')
+    .map((s) => s.trim().split(':'))
+    .filter((p) => p.length === 3 && p[0] && p[1])
+    .map(([key, token, at]) => ({ key, token, at: Number(at) || 0 }));
+}
+
+export async function claimCardSendOnLead(leadId: string, cardKey: string, settleMs = SEND_CLAIM_SETTLE_MS): Promise<CardSendClaim> {
+  try {
+    const readClaims = async () => {
+      const lead = await instantlyRequest<{ payload?: Record<string, string> }>({ method: 'GET', url: `/leads/${leadId}` });
+      return parseSendClaims(lead.payload?.[SEND_CLAIMS_VAR]);
+    };
+    const before = await readClaims();
+    const prior = before.find((c) => c.key === cardKey);
+    if (prior) return { status: 'already_claimed', at: prior.at };
+
+    const token = crypto.randomBytes(6).toString('hex');
+    const mine = { key: cardKey, token, at: Math.floor(Date.now() / 1000) };
+    const next = [...before, mine].slice(-SEND_CLAIMS_KEEP).map((c) => `${c.key}:${c.token}:${c.at}`).join(',');
+    await instantlyRequest({ method: 'PATCH', url: `/leads/${leadId}`, data: { custom_variables: { [SEND_CLAIMS_VAR]: next } } });
+
+    await new Promise((r) => setTimeout(r, settleMs));
+    const after = (await readClaims()).find((c) => c.key === cardKey);
+    if (after?.token === token) return { status: 'claimed' };
+    if (after) return { status: 'already_claimed', at: after.at };
+    // Our entry vanished: a claim for a different card on this lead overwrote it at the same
+    // moment. Nothing was sent, so clicking again is safe.
+    return { status: 'error', reason: 'another card for this lead was being sent at the same moment' };
+  } catch (err) {
+    return { status: 'error', reason: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+export async function claimCardSend(campaign_id: string, lead_email: string, cardKey: string): Promise<CardSendClaim> {
+  try {
+    const id = await findLeadIdByEmail(campaign_id, lead_email);
+    if (!id) return { status: 'error', reason: `lead ${lead_email} not found in campaign ${campaign_id}` };
+    return await claimCardSendOnLead(id, cardKey);
+  } catch (err) {
+    return { status: 'error', reason: err instanceof Error ? err.message : String(err) };
   }
 }
 

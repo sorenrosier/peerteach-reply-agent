@@ -690,6 +690,16 @@ export async function postInfoNote(text: string): Promise<void> {
   await postMessage([{ type: 'section', text: { type: 'mrkdwn', text } }], text.slice(0, 150));
 }
 
+// A private note to whoever clicked, leaving the card itself untouched (used when a click is
+// ignored, so a stale click can't overwrite the "Reply sent" record).
+export async function notifyClickerViaResponseUrl(responseUrl: string, text: string): Promise<void> {
+  try {
+    await axios.post(responseUrl, { response_type: 'ephemeral', replace_original: false, text });
+  } catch (err) {
+    console.error('[slack] response_url ephemeral note failed:', err instanceof Error ? err.message : String(err));
+  }
+}
+
 // Update an existing message via response_url (used by slack-action handler).
 export async function updateViaResponseUrl(
   responseUrl: string,
