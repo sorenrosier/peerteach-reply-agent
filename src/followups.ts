@@ -6,6 +6,7 @@ import { getSenderIdentity } from './agent';
 import { CALENDLY_SCHEDULING_URL, isAutoSendEnabled } from './env';
 import { postProactiveApproval, postInfoNote, replySubject } from './slack';
 import { renderLinks } from './linkFormat';
+import { isTeacherPersona } from './teacherAgent';
 
 // When a follow-up is due, counted from when we sent the Calendly link:
 //  - 24 hours when the lead said nothing about timing;
@@ -193,6 +194,9 @@ async function followUpFor(
 ): Promise<'sent' | 'queued' | 'skipped' | 'not-yet'> {
   const lead = await findLeadByEmailAnyCampaign(offer.lead);
   if (!lead) return 'skipped';
+  // Teachers have their own follow-ups (the demo nudge and the post-Remy check-in, which links
+  // Katie's Calendly). This admin-style nudge on top of those was a duplicate.
+  if (isTeacherPersona(lead.payload as any) || String(lead.payload.demo_link || '').trim()) return 'skipped';
   if (lead.interestStatus < 0 || lead.interestStatus >= 2) return 'skipped'; // not interested / already booked / closed
   // Only the agent's own emails. Something Katie wrote by hand that happens to link her Calendly is
   // her conversation, not ours to nudge.
