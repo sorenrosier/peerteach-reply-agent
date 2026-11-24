@@ -311,6 +311,12 @@ function buildContext(payload: InstantlyWebhookPayload, thread: ThreadEmail[], s
 function checkDraft(draft: string, senderFirst: string): string | null {
   const lines = draft.split('\n').map((l) => l.trim()).filter(Boolean);
   const last = lines[lines.length - 1] || '';
+  // Every reply opens with "Hi [name]," or the standard "I'm so glad..." line. Anything else
+  // first is the model talking about the email (Amber Daigle, 11/24: "I've written a short,
+  // friendly decline..." went out above the real reply).
+  if (!/^(Hi\b|I['’]m so glad)/.test(lines[0] || '')) {
+    return `doesn't open with "Hi [name]," (possible leaked reasoning: "${(lines[0] || '').slice(0, 80)}")`;
+  }
   if (!new RegExp(`^-\\s?${senderFirst.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.?$`, 'i').test(last)) {
     return `doesn't end with the "-${senderFirst}" sign-off (possible leaked reasoning)`;
   }
