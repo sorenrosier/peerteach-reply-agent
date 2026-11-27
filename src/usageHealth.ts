@@ -41,9 +41,20 @@ import {
 // USAGE_HEALTH_MODE=live writes to Close. Anything else (the default) is a dry run: it reads the
 // feed and Close, posts what it would do, and writes nothing and creates no fields.
 
-const HEALTH_URL_DEFAULT = 'https://peerteach-email.lovable.app/api/public/peerteach/health';
+const SALES_OPS_BASE_DEFAULT = 'https://peerteach-email.lovable.app';
+// The Sales Ops app's address, without a trailing slash: SALES_OPS_BASE_URL, else wherever
+// SALES_OPS_HEALTH_URL points, else the default. The check-in job (src/lapseNudges.ts) uses it too.
+export function salesOpsBase(): string {
+  const base = envOptional('SALES_OPS_BASE_URL');
+  if (base) return base.replace(/\/+$/, '');
+  try {
+    const health = envOptional('SALES_OPS_HEALTH_URL');
+    if (health) return new URL(health).origin;
+  } catch { /* not a URL: use the default */ }
+  return SALES_OPS_BASE_DEFAULT;
+}
 const MIN_PAIRS = 2; // a real session has at least two pairs
-const LEADS_QUERY = '"custom.School NCES":* or "custom.District NCES":*';
+export const LEADS_QUERY = '"custom.School NCES":* or "custom.District NCES":*';
 // Time budget: stop writing after this, so the run finishes inside its limit. Whatever is left
 // still differs from Close tomorrow night, so the next run picks it up.
 const RUN_BUDGET_MS = 90_000;
@@ -66,7 +77,7 @@ export interface UsageHealthDeps {
 async function fetchUsage(q: UsageQuery): Promise<any> {
   const secret = envOptional('PEERTEACH_USAGE_SECRET');
   if (!secret) throw new Error('PEERTEACH_USAGE_SECRET is not set');
-  const res = await axios.get(envOptional('SALES_OPS_HEALTH_URL') || HEALTH_URL_DEFAULT, {
+  const res = await axios.get(envOptional('SALES_OPS_HEALTH_URL') || `${salesOpsBase()}/api/public/peerteach/health`, {
     headers: { 'x-peerteach-usage-secret': secret },
     params: { ...q, min_pairs: MIN_PAIRS },
     timeout: 30000,
@@ -104,14 +115,14 @@ export interface UsageHealthResult {
 }
 
 // The feed's teachers, or a thrown error when the response isn't a usable one.
-function teachersOf(body: any): any[] {
+export function teachersOf(body: any): any[] {
   if (!body || typeof body !== 'object' || body.ok !== true || !Array.isArray(body.teachers)) {
     throw new Error(`usage feed returned no usable data: ${JSON.stringify(body ?? null).slice(0, 200)}`);
   }
   return body.teachers;
 }
 
-function toHealthLead(row: CloseLeadRow, ids: Map<string, string>): HealthLead {
+export function toHealthLead(row: CloseLeadRow, ids: Map<string, string>): HealthLead {
   const val = (fieldName: string) => {
     const id = ids.get(fieldName.toLowerCase());
     return id ? String(row.custom[id] ?? '').trim() : '';

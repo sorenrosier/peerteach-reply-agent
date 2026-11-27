@@ -97,7 +97,11 @@ export interface SlackActionPayload {
   };
   response_url: string;
   channel: { id: string };
-  user?: { id: string; name?: string };
+  user?: { id: string; name?: string; username?: string };
+  // Present on button clicks; needed to open a modal (check-in cards' Edit button).
+  trigger_id?: string;
+  // Present when a modal is submitted (type 'view_submission').
+  view?: { callback_id?: string; private_metadata?: string; state?: { values?: Record<string, Record<string, { value?: string | null }>> } };
 }
 
 export interface SendReplyButtonValue {

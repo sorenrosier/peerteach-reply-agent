@@ -46,7 +46,7 @@ export function schoolYearStart(today: string): string {
 }
 
 // The Monday of the Mon-Sun week containing d.
-function weekStart(d: string): string {
+export function weekStart(d: string): string {
   const dow = new Date(toMs(d)).getUTCDay(); // 0 = Sunday
   return addDays(d, -((dow + 6) % 7));
 }
@@ -57,19 +57,25 @@ export function thanksgiving(year: number): string {
   return `${year}-11-${String(firstThursday + 21).padStart(2, '0')}`;
 }
 
+// How many holiday weeks (Thanksgiving, Dec 25, Jan 1) the days from..to touch.
+export function holidayWeeksTouching(from: string, to: string): number {
+  const year = Number(to.slice(0, 4));
+  let holidayWeeks = 0;
+  for (const y of [year - 1, year]) {
+    for (const holiday of [thanksgiving(y), `${y}-12-25`, `${y + 1}-01-01`]) {
+      const start = weekStart(holiday);
+      if (start <= to && addDays(start, 6) >= from) holidayWeeks++;
+    }
+  }
+  return holidayWeeks;
+}
+
 // The 28 days ending today, plus 7 more days back for each holiday week (Thanksgiving, Dec 25,
 // Jan 1) those 28 days touch. Holidays are checked against the plain 28 days only, so the
 // extension itself never pulls in another holiday.
 export function recentWindow(today: string): { from: string; to: string; holidayWeeks: number } {
   const baseFrom = addDays(today, -(WINDOW_DAYS - 1));
-  const year = Number(today.slice(0, 4));
-  let holidayWeeks = 0;
-  for (const y of [year - 1, year]) {
-    for (const holiday of [thanksgiving(y), `${y}-12-25`, `${y + 1}-01-01`]) {
-      const start = weekStart(holiday);
-      if (start <= today && addDays(start, 6) >= baseFrom) holidayWeeks++;
-    }
-  }
+  const holidayWeeks = holidayWeeksTouching(baseFrom, today);
   return { from: addDays(baseFrom, -7 * holidayWeeks), to: today, holidayWeeks };
 }
 
