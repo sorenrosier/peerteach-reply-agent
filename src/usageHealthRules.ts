@@ -15,7 +15,7 @@ export const ON_TRACK_TEACHER_SESSIONS = 3;
 export const STALLED_MIN_YEAR_SESSIONS = 3;
 export const STALE_AFTER_DAYS = 4;
 
-// Best to worst; "slipped" means moving right.
+// Best to worst.
 export const HEALTH_LABELS = ['On track', 'Light', 'Stalled', 'Silent'] as const;
 export type HealthLabel = (typeof HEALTH_LABELS)[number];
 
@@ -39,6 +39,9 @@ const toMs = (d: string) => Date.parse(`${d}T00:00:00Z`);
 const fromMs = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 export const addDays = (d: string, n: number) => fromMs(toMs(d) + n * DAY_MS);
 export const isDate = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) && Number.isFinite(toMs(v.slice(0, 10)));
+
+// Today's date in Pacific time (the team's day), YYYY-MM-DD.
+export const pacificDate = (now: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 
 export function schoolYearStart(today: string): string {
   const [y, m] = today.split('-').map(Number);
@@ -156,6 +159,7 @@ export interface SchoolUsage {
   activeTeachers: number;
   teachersEver: number;
   sessionsYear: number;
+  firstSessionDate: string; // the earliest over its teachers
   lastSessionDate: string;
   maxTeacherSessionsWindow: number;
 }
@@ -175,7 +179,7 @@ export function aggregateSchools(teachers: unknown, excludedTeacherIds: Readonly
     if (!year) continue;
     let s = out.get(key);
     if (!s) {
-      s = { key, ncesSchoolId: String(t.nces_school_id), districtKey: '', schoolName: '', districtName: '', sessionsWindow: 0, activeTeachers: 0, teachersEver: 0, sessionsYear: 0, lastSessionDate: '', maxTeacherSessionsWindow: 0 };
+      s = { key, ncesSchoolId: String(t.nces_school_id), districtKey: '', schoolName: '', districtName: '', sessionsWindow: 0, activeTeachers: 0, teachersEver: 0, sessionsYear: 0, firstSessionDate: '', lastSessionDate: '', maxTeacherSessionsWindow: 0 };
       out.set(key, s);
     }
     s.districtKey = s.districtKey || normNces(t.nces_district_id);
@@ -186,6 +190,7 @@ export function aggregateSchools(teachers: unknown, excludedTeacherIds: Readonly
     s.teachersEver += 1;
     if (win >= 1) s.activeTeachers += 1;
     s.maxTeacherSessionsWindow = Math.max(s.maxTeacherSessionsWindow, win);
+    if (isDate(t.first_session_date) && (!s.firstSessionDate || t.first_session_date.slice(0, 10) < s.firstSessionDate)) s.firstSessionDate = t.first_session_date.slice(0, 10);
     if (isDate(t.last_session_date) && t.last_session_date.slice(0, 10) > s.lastSessionDate) s.lastSessionDate = t.last_session_date.slice(0, 10);
   }
   return out;
@@ -195,11 +200,6 @@ export function healthLabel(s: Pick<SchoolUsage, 'sessionsWindow' | 'sessionsYea
   if (s.maxTeacherSessionsWindow >= ON_TRACK_TEACHER_SESSIONS) return 'On track';
   if (s.sessionsWindow >= 1) return 'Light';
   return s.sessionsYear >= STALLED_MIN_YEAR_SESSIONS ? 'Stalled' : 'Silent';
-}
-
-const rank = (label: string): number => HEALTH_LABELS.indexOf(label as HealthLabel);
-export function isWorse(newLabel: string, oldLabel: string): boolean {
-  return rank(oldLabel) >= 0 && rank(newLabel) > rank(oldLabel);
 }
 
 // e.g. "6 schools: 3 on track, 2 light, 1 stalled" (zero counts left out).
@@ -331,54 +331,24 @@ export function planHealth(schools: Map<string, SchoolUsage>, leads: HealthLead[
   return plan;
 }
 
-// ---- Slack wording (school and lead names only; never a teacher's name or email) ----
+// ---- Slack ----
 
-export const UNMATCHED_ALERT_MIN_SESSIONS = 5;
-
-const unmatchedLine = (u: UnmatchedSchool) => `• ${u.schoolName || '(no name)'} (${u.ncesSchoolId}): ${u.sessionsWindow} in the window, ${u.sessionsYear} this year`;
-const countsLine = (c: Record<HealthLabel, number>) => HEALTH_LABELS.map((l) => `${l} ${c[l]}`).join(', ');
-
-export function dryRunSummary(plan: HealthPlan, ctx: { from: string; to: string; latestUsageDate: string }): string {
-  const total = plan.matched.length + plan.unmatched.length;
-  const lines = [
-    `:bar_chart: *Usage health, DRY RUN (nothing written to Close).* Window ${ctx.from} to ${ctx.to}, usage through ${ctx.latestUsageDate}.`,
-    `Schools with sessions this year: ${total} (${countsLine(plan.labelCounts)}); ${plan.matched.length} matched to a Close lead, ${plan.unmatched.length} unmatched.`,
-    `Would update ${plan.schoolUpdates.length} school lead${plan.schoolUpdates.length === 1 ? '' : 's'} (${plan.schoolsUnchanged} already up to date${plan.wentSilent ? `, ${plan.wentSilent} no longer in the usage data and going Silent` : ''}) and ${plan.districtUpdates.length} district lead${plan.districtUpdates.length === 1 ? '' : 's'}.`,
-  ];
-  if (plan.districtRollups.length) {
-    lines.push(`*District roll-ups (${plan.districtRollups.length}):*`, ...plan.districtRollups.slice(0, 10).map((d) => `• ${d.leadName || d.leadId}: ${d.line}`));
-    if (plan.districtRollups.length > 10) lines.push(`…and ${plan.districtRollups.length - 10} more`);
+// Like chunkLines, but keeps each blank-line-separated section whole when it can, so a long
+// digest is split between sections rather than in the middle of one.
+export function chunkSections(text: string, max = 2800): string[] {
+  const out: string[] = [];
+  let cur = '';
+  for (const section of text.split('\n\n')) {
+    if (section.length > max) {
+      if (cur) { out.push(cur); cur = ''; }
+      out.push(...chunkLines(section, max));
+    } else if (cur && cur.length + 2 + section.length > max) {
+      out.push(cur);
+      cur = section;
+    } else cur = cur ? `${cur}\n\n${section}` : section;
   }
-  if (plan.unmatched.length) {
-    lines.push(`*Schools with no Close lead (${plan.unmatched.length > 10 ? `top 10 of ${plan.unmatched.length}` : plan.unmatched.length}, by sessions):*`, ...plan.unmatched.slice(0, 10).map(unmatchedLine));
-  }
-  if (plan.duplicates.length) {
-    lines.push(`*School NCES shared by more than one lead (${plan.duplicates.length}):*`, ...plan.duplicates.slice(0, 10).map((d) => `• ${d.nces}: using ${d.chosen.name.trim() ? `"${d.chosen.name}"` : 'an unnamed lead'}, ignoring ${d.ignored.length} other${d.ignored.length === 1 ? '' : 's'}`));
-    if (plan.duplicates.length > 10) lines.push(`…and ${plan.duplicates.length - 10} more`);
-  }
-  return lines.join('\n');
-}
-
-// Live runs: busy schools the job couldn't put anywhere. Null when there are none.
-export function unmatchedAlert(plan: HealthPlan): string | null {
-  const busy = plan.unmatched.filter((u) => u.sessionsWindow >= UNMATCHED_ALERT_MIN_SESSIONS);
-  if (!busy.length) return null;
-  return [`:mag: *Usage health: ${busy.length} active school${busy.length === 1 ? ' has' : 's have'} no Close lead* (${UNMATCHED_ALERT_MIN_SESSIONS}+ sessions in the window, nothing was created):`, ...busy.slice(0, 20).map(unmatchedLine), ...(busy.length > 20 ? [`…and ${busy.length - 20} more`] : [])].join('\n');
-}
-
-export interface SlippedSchool { schoolName: string; from: HealthLabel; to: HealthLabel; lastSessionDate: string; leadUrl: string }
-
-// Matched schools whose label is worse now than it was (`before`: normalised NCES -> label).
-export function slippedSchools(matched: MatchedSchool[], before: Map<string, HealthLabel>, leadUrl: (leadId: string) => string): SlippedSchool[] {
-  return matched
-    .filter((m) => isWorse(m.label, before.get(m.key) ?? ''))
-    .map((m) => ({ schoolName: m.schoolName, from: before.get(m.key)!, to: m.label, lastSessionDate: m.lastSessionDate, leadUrl: leadUrl(m.leadId) }))
-    .sort((a, b) => rank(b.to) - rank(a.to) || a.schoolName.localeCompare(b.schoolName));
-}
-
-export function slippedMessage(slipped: SlippedSchool[]): string | null {
-  if (!slipped.length) return null;
-  return [`:chart_with_downwards_trend: *Schools that slipped this week (${slipped.length}):*`, ...slipped.map((s) => `• ${s.schoolName}: ${s.from} → ${s.to}, last session ${s.lastSessionDate || 'unknown'} (<${s.leadUrl}|open in Close>)`)].join('\n');
+  if (cur) out.push(cur);
+  return out;
 }
 
 // Slack caps a section at 3,000 characters: long lists go out as several messages, split on lines.

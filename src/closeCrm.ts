@@ -141,20 +141,28 @@ export async function createOpportunity(body: Record<string, any>): Promise<stri
   return res.data.id;
 }
 
-// ---- for the check-in emails to teachers who stopped (src/lapseNudges.ts) ----
+// ---- for the check-in emails (src/lapseNudges.ts) and the health digest (src/usageHealth.ts) ----
 
-// The lead IDs that have at least one active opportunity, in one paginated listing.
-export async function listActiveOpportunityLeadIds(): Promise<Set<string>> {
-  const out = new Set<string>();
+// An active opportunity cut down to its lead, stage and last change.
+export interface ActiveOpportunity { leadId: string; statusLabel: string; dateUpdated: string }
+
+// Every active opportunity, in one paginated listing.
+export async function listActiveOpportunities(): Promise<ActiveOpportunity[]> {
+  const out: ActiveOpportunity[] = [];
   let seen = 0;
   for (let page = 0; page < 300; page++) {
-    const res = await close().get('opportunity/', { params: { status_type: 'active', _fields: 'lead_id', _limit: 100, _skip: seen } });
+    const res = await close().get('opportunity/', { params: { status_type: 'active', _fields: 'lead_id,status_label,date_updated', _limit: 100, _skip: seen } });
     const rows: any[] = res.data.data ?? [];
     seen += rows.length;
-    for (const o of rows) if (o?.lead_id) out.add(String(o.lead_id));
+    for (const o of rows) if (o?.lead_id) out.push({ leadId: String(o.lead_id), statusLabel: String(o.status_label ?? ''), dateUpdated: String(o.date_updated ?? '') });
     if (!res.data.has_more || !rows.length) return out;
   }
-  throw new Error(`listActiveOpportunityLeadIds: more than ${seen} active opportunities`);
+  throw new Error(`listActiveOpportunities: more than ${seen} active opportunities`);
+}
+
+// The lead IDs that have at least one active opportunity.
+export async function listActiveOpportunityLeadIds(): Promise<Set<string>> {
+  return new Set((await listActiveOpportunities()).map((o) => o.leadId));
 }
 
 // An email activity on a lead, cut down to who and when. Addresses are lower-cased and bare.
