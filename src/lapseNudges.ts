@@ -3,7 +3,7 @@ import { envOptional } from './env';
 import { postBlocks, postInfoNote } from './slack';
 import { CloseEmailRow, CloseLeadRow, closeErrorText, closeLeadUrl, customFieldIds, listActiveOpportunityLeadIds, listLeadEmailsSince, listLeads } from './closeCrm';
 import { LEADS_QUERY, salesOpsBase, teachersOf, toHealthLead } from './usageHealth';
-import { HealthLead, addDays, chooseSchoolLeads, isDate, isFeedStale, normNces, parseExcludedIds, schoolYearStart } from './usageHealthRules';
+import { HealthLead, addDays, chooseSchoolLeads, isDate, isFeedStale, normNces, pacificDate, parseExcludedIds, schoolYearStart } from './usageHealthRules';
 import {
   MIN_PAIRS,
   MIN_SESSIONS,
@@ -128,7 +128,6 @@ export interface LapseNudgeResult {
   leftAlone: Record<string, number>; // reason -> teachers
 }
 
-const pacificDate = (now: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
 
 function holdoutUntil(): string | null {
   const v = (envOptional('NUDGE_HOLDOUT_UNTIL') ?? '').trim();

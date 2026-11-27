@@ -1,34 +1,30 @@
 import axios from 'axios';
 import { envOptional } from './env';
 import { postInfoNote } from './slack';
-import { CloseLeadRow, closeErrorText, closeLeadUrl, customFieldIds, ensureLeadTextField, listLeads, updateLead } from './closeCrm';
+import { ActiveOpportunity, CloseLeadRow, closeErrorText, closeLeadUrl, customFieldIds, ensureLeadTextField, listActiveOpportunities, listLeads, updateLead } from './closeCrm';
+import { buildDigest, digestSkipReason } from './healthDigestRules';
 import {
   ALL_FIELDS,
-  FIELD,
   HealthLabel,
   HealthLead,
-  HealthPlan,
   LeadUpdate,
-  addDays,
   aggregateSchools,
   chunkLines,
-  dryRunSummary,
-  healthLabel,
   isFeedStale,
   isSummerPause,
+  pacificDate,
   parseExcludedIds,
   planHealth,
   recentWindow,
   schoolYearStart,
-  slippedMessage,
-  slippedSchools,
-  unmatchedAlert,
+  weekStart,
 } from './usageHealthRules';
 
 // Nightly usage health: reads per-teacher usage from the Sales Ops app and writes each school's
 // health onto its Close lead (PT Health, sessions, teachers, last session), plus a one-line
 // roll-up on district leads, so the team can see which schools are thriving (Soren, 2026-11-26).
-// The rules live in src/usageHealthRules.ts; this file only does the reading, writing and Slack.
+// The rules live in src/usageHealthRules.ts and the Monday digest's in src/healthDigestRules.ts;
+// this file only does the reading, writing and Slack.
 //
 // Schools are matched to leads by School NCES with leading zeros ignored. All leads that carry an
 // NCES ID are read in one paginated listing and matched in memory. Nothing is ever created: a
@@ -39,7 +35,11 @@ import {
 // stalled. From mid-June to mid-August the job does nothing at all.
 //
 // USAGE_HEALTH_MODE=live writes to Close. Anything else (the default) is a dry run: it reads the
-// feed and Close, posts what it would do, and writes nothing and creates no fields.
+// feed and Close, logs what it would write, and writes nothing and creates no fields.
+//
+// On Mondays (Pacific), in both modes, the health channel gets one digest naming the schools that
+// stopped, are slowing down, are going well or never got going (Soren, 2026-11-27). Nothing else
+// is posted there; the technical counts go to the function logs. No digest in a holiday week.
 
 const SALES_OPS_BASE_DEFAULT = 'https://peerteach-email.lovable.app';
 // The Sales Ops app's address, without a trailing slash: SALES_OPS_BASE_URL, else wherever
@@ -69,9 +69,10 @@ export interface UsageHealthDeps {
   leadFieldIds(): Promise<Map<string, string>>; // lower-cased field name -> id
   ensureLeadTextField(name: string): Promise<string>;
   listLeads(query: string, customFieldIdList: string[]): Promise<CloseLeadRow[]>;
+  activeOpportunities(): Promise<ActiveOpportunity[]>; // only read when the digest goes out
   updateLead(leadId: string, body: Record<string, any>): Promise<void>;
   postNote(text: string): Promise<void>; // warnings and errors: the main channel, where they get seen
-  postReport(text: string): Promise<void>; // summaries and the Monday list: the health channel
+  postReport(text: string): Promise<void>; // the Monday digest: the health channel
 }
 
 async function fetchUsage(q: UsageQuery): Promise<any> {
@@ -85,9 +86,9 @@ async function fetchUsage(q: UsageQuery): Promise<any> {
   return res.data;
 }
 
-const realDeps: UsageHealthDeps = { fetchUsage, leadFieldIds: () => customFieldIds('lead'), ensureLeadTextField, listLeads, updateLead,
+const realDeps: UsageHealthDeps = { fetchUsage, leadFieldIds: () => customFieldIds('lead'), ensureLeadTextField, listLeads, updateLead, activeOpportunities: listActiveOpportunities,
   postNote: (text) => postInfoNote(text),
-  // USAGE_HEALTH_SLACK_CHANNEL keeps the nightly summaries out of the channel where drafts wait
+  // USAGE_HEALTH_SLACK_CHANNEL keeps the digest out of the channel where drafts wait
   // for a decision. Unset, or if the bot can't post there, they go to the main channel.
   postReport: (text) => postInfoNote(text, envOptional('USAGE_HEALTH_SLACK_CHANNEL') || undefined),
 };
@@ -111,7 +112,7 @@ export interface UsageHealthResult {
   updated: number;
   failed: number;
   deferred: number;
-  slipped: number;
+  digest?: string; // 'posted', 'empty', 'failed', or why it wasn't due
 }
 
 // The feed's teachers, or a thrown error when the response isn't a usable one.
@@ -133,11 +134,12 @@ export function toHealthLead(row: CloseLeadRow, ids: Map<string, string>): Healt
 }
 
 // Never throws: a failure is logged, posted to Slack and returned as { ok: false }.
-export async function runUsageHealth(opts: { forceDry?: boolean; now?: Date } = {}, deps: UsageHealthDeps = realDeps): Promise<UsageHealthResult> {
+// `forceDigest` (?digest=1) posts the digest on any day.
+export async function runUsageHealth(opts: { forceDry?: boolean; forceDigest?: boolean; now?: Date } = {}, deps: UsageHealthDeps = realDeps): Promise<UsageHealthResult> {
   const live = isLive() && !opts.forceDry;
   const now = opts.now ?? new Date();
   const today = now.toISOString().slice(0, 10);
-  const result: UsageHealthResult = { ok: true, mode: live ? 'live' : 'dry', today, schools: 0, matched: 0, unmatched: 0, duplicates: 0, districtRollups: 0, leadsToUpdate: 0, updated: 0, failed: 0, deferred: 0, slipped: 0 };
+  const result: UsageHealthResult = { ok: true, mode: live ? 'live' : 'dry', today, schools: 0, matched: 0, unmatched: 0, duplicates: 0, districtRollups: 0, leadsToUpdate: 0, updated: 0, failed: 0, deferred: 0 };
   const send = async (text: string, how: (part: string) => Promise<void>) => {
     for (const part of chunkLines(text)) {
       try { await how(part); } catch (err) { console.warn('[usageHealth] Slack post failed:', closeErrorText(err)); }
@@ -200,13 +202,23 @@ export async function runUsageHealth(opts: { forceDry?: boolean; now?: Date } = 
     for (const d of plan.duplicates) console.log(`[usageHealth] duplicate School NCES ${d.nces}: using ${d.chosen.id}, ignoring ${d.ignored.map((i) => i.id).join(', ')}`);
     for (const u of plan.unmatched) console.log(`[usageHealth] no Close lead for ${u.schoolName || '(no name)'} ${u.ncesSchoolId}: ${u.sessionsWindow} in window, ${u.sessionsYear} this year`);
 
-    if (!live) {
-      await report(dryRunSummary(plan, { from: window.from, to: window.to, latestUsageDate: result.latestUsageDate }));
-    } else {
-      if (result.failed || result.deferred) await post(`:warning: *Usage health:* ${result.updated} lead${result.updated === 1 ? '' : 's'} updated in Close, ${result.failed} failed, ${result.deferred} left for the next run (out of time). Details are in the function logs.`);
-      const alert = unmatchedAlert(plan);
-      if (alert) await report(alert);
-      if (isMondayPacific(now)) result.slipped = await postSlipped(plan, { since, today, excluded }, deps, post, report);
+    console.log(`[usageHealth] ${plan.matched.length} matched, ${plan.unmatched.length} unmatched, ${plan.duplicates.length} duplicate NCES, ${plan.schoolUpdates.length} school leads to update (${plan.schoolsUnchanged} unchanged, ${plan.wentSilent} going Silent), ${plan.districtRollups.length} district roll-ups (${plan.districtUpdates.length} changed)`);
+    for (const d of plan.districtRollups) console.log(`[usageHealth] district ${d.leadId} ${d.leadName || '(unnamed)'}: ${d.line}`);
+    if (live && (result.failed || result.deferred)) await post(`:warning: *Usage health:* ${result.updated} lead${result.updated === 1 ? '' : 's'} updated in Close, ${result.failed} failed, ${result.deferred} left for the next run (out of time). Details are in the function logs.`);
+
+    const day = pacificDate(now);
+    const skip = digestSkipReason(day, opts.forceDigest);
+    if (skip) result.digest = skip;
+    else {
+      try {
+        const text = buildDigest({ schools, leads, opportunities: await deps.activeOpportunities(), today, weekOf: weekStart(day), leadUrl: closeLeadUrl });
+        result.digest = text ? 'posted' : 'empty';
+        if (text) await report(text);
+      } catch (err) {
+        result.digest = 'failed';
+        console.error('[usageHealth] digest failed:', closeErrorText(err));
+        await post(`:warning: *Usage health:* ${live ? 'Close was updated, but ' : ''}the weekly school health digest could not be built: \`${closeErrorText(err).slice(0, 300)}\``);
+      }
     }
     console.log(`[usageHealth] ${JSON.stringify(result)}`);
     return result;
@@ -215,35 +227,5 @@ export async function runUsageHealth(opts: { forceDry?: boolean; now?: Date } = 
     console.error('[usageHealth] failed:', msg);
     await post(`:warning: *Usage health job failed* (${result.mode === 'live' ? 'live' : 'dry run'}): \`${msg.slice(0, 500)}\``);
     return { ...result, ok: false, error: msg };
-  }
-}
-
-function isMondayPacific(now: Date): boolean {
-  return new Intl.DateTimeFormat('en-US', { timeZone: 'America/Los_Angeles', weekday: 'short' }).format(now) === 'Mon';
-}
-
-// Monday's "schools that slipped" list. The job rewrites PT Health every night, so by Monday the
-// value stored in Close is only a day old and can't show a week's change. Instead the feed is
-// asked for the window as it stood 7 days ago and the same rules give last week's labels.
-async function postSlipped(
-  plan: HealthPlan,
-  ctx: { since: string; today: string; excluded: Set<string> },
-  deps: UsageHealthDeps,
-  post: (text: string) => Promise<void>,
-  report: (text: string) => Promise<void>,
-): Promise<number> {
-  try {
-    const then = recentWindow(addDays(ctx.today, -7));
-    const body = await deps.fetchUsage({ since: ctx.since, from: then.from, to: then.to });
-    const before = new Map<string, HealthLabel>();
-    for (const [key, s] of aggregateSchools(teachersOf(body), ctx.excluded)) before.set(key, healthLabel(s));
-    const slipped = slippedSchools(plan.matched, before, closeLeadUrl);
-    const text = slippedMessage(slipped);
-    if (text) await report(text);
-    return slipped.length;
-  } catch (err) {
-    console.error('[usageHealth] slipped list failed:', closeErrorText(err));
-    await post(`:warning: *Usage health:* Close was updated, but the weekly "schools that slipped" list could not be built: \`${closeErrorText(err).slice(0, 300)}\``);
-    return 0;
   }
 }

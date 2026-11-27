@@ -9,7 +9,6 @@ import {
   isExcludedTeacher,
   isFeedStale,
   isSummerPause,
-  isWorse,
   normNces,
   parseExcludedIds,
   planHealth,
@@ -18,8 +17,10 @@ import {
   schoolYearStart,
   thanksgiving,
 } from '../src/usageHealthRules';
+import type { SchoolUsage } from '../src/usageHealthRules';
+import { buildDigest, digestSections, digestSkipReason, displayName, isSlowing, pacePhrase, schoolPaces, schoolWeeks, shortDate } from '../src/healthDigestRules';
 import { runUsageHealth, UsageHealthDeps } from '../src/usageHealth';
-import type { CloseLeadRow } from '../src/closeCrm';
+import type { ActiveOpportunity, CloseLeadRow } from '../src/closeCrm';
 
 // Offline check of the usage health job (src/usageHealthRules.ts and src/usageHealth.ts): the
 // rules with plain asserts, then whole runs on fake Close / Slack / feed. No network.
@@ -85,14 +86,15 @@ function feed(latest = '2026-12-01', sameSchoolWindow = 2) {
   };
 }
 
-interface Fake { deps: UsageHealthDeps; updates: Array<{ id: string; body: Record<string, any> }>; notes: string[]; warnings: string[]; reports: string[]; fetches: any[]; ensured: string[]; listed: number }
+interface Fake { deps: UsageHealthDeps; updates: Array<{ id: string; body: Record<string, any> }>; notes: string[]; warnings: string[]; reports: string[]; fetches: any[]; ensured: string[]; listed: number; oppReads: number }
 function fake(over: Partial<UsageHealthDeps> = {}): Fake {
-  const f: Fake = { updates: [], notes: [], warnings: [], reports: [], fetches: [], ensured: [], listed: 0, deps: null as any };
+  const f: Fake = { updates: [], notes: [], warnings: [], reports: [], fetches: [], ensured: [], listed: 0, oppReads: 0, deps: null as any };
   f.deps = {
     fetchUsage: async (q) => { f.fetches.push(q); return feed(); },
     leadFieldIds: async () => new Map(IDS),
     ensureLeadTextField: async (name) => { f.ensured.push(name); return `cf_${name}`; },
     listLeads: async () => { f.listed++; return closeLeads(); },
+    activeOpportunities: async () => { f.oppReads++; return [{ leadId: 'lead_district', statusLabel: 'Pilot Launched', dateUpdated: '2026-11-01T00:00:00Z' }]; },
     updateLead: async (id, body) => { f.updates.push({ id, body }); },
     // `notes` is everything posted, in order; `warnings` and `reports` say which channel got it.
     postNote: async (text) => { f.notes.push(text); f.warnings.push(text); },
@@ -161,10 +163,6 @@ async function main() {
     assert.strictEqual(healthLabel(usage(0, 2)), 'Silent');
     assert.strictEqual(healthLabel(usage(0, 0)), 'Silent');
   });
-  await check('label: order On track > Light > Stalled > Silent', () => {
-    assert.ok(isWorse('Light', 'On track') && isWorse('Stalled', 'Light') && isWorse('Silent', 'Stalled'));
-    assert.ok(!isWorse('On track', 'Light') && !isWorse('Light', 'Light') && !isWorse('Silent', '') && !isWorse('Silent', 'something else'));
-  });
 
   // ---- window ----
   await check('window: mid-October is the plain 28 days', () => assert.deepStrictEqual(recentWindow('2026-10-14'), { from: '2026-09-17', to: '2026-10-14', holidayWeeks: 0 }));
@@ -204,7 +202,7 @@ async function main() {
     const schools = aggregateSchools(feed().teachers, parseExcludedIds('999'));
     assert.deepStrictEqual(schools.get('63513007356'), {
       key: '63513007356', ncesSchoolId: '063513007356', districtKey: '635130', schoolName: 'Bollinger Canyon Elementary', districtName: 'San Ramon Valley Unified',
-      sessionsWindow: 4, activeTeachers: 2, teachersEver: 2, sessionsYear: 9, lastSessionDate: '2026-11-20', maxTeacherSessionsWindow: 3,
+      sessionsWindow: 4, activeTeachers: 2, teachersEver: 2, sessionsYear: 9, firstSessionDate: '2026-09-01', lastSessionDate: '2026-11-20', maxTeacherSessionsWindow: 3,
     });
     assert.strictEqual(schools.size, 4);
     assert.strictEqual(aggregateSchools(null, new Set()).size, 0);
@@ -273,8 +271,212 @@ async function main() {
     assert.deepStrictEqual(Object.keys(plan.districtUpdates[0].fields), [FIELD.schoolsHealth]);
   });
 
+  // ---- weekly digest: paces ----
+  await check('digest: school weeks are Monday weeks overlapping the span, holiday weeks out, at least 1', () => {
+    assert.strictEqual(schoolWeeks('2026-10-14', '2026-10-20'), 2); // Wed to Tue: two Monday weeks
+    assert.strictEqual(schoolWeeks('2026-11-16', '2026-12-06'), 2); // Thanksgiving week is out
+    assert.strictEqual(schoolWeeks('2026-10-27', '2026-11-30'), 5); // the window for Mon Nov 30
+    assert.strictEqual(schoolWeeks('2026-11-24', '2026-11-25'), 1); // all holiday: still 1
+    assert.strictEqual(schoolWeeks('2026-12-14', '2027-01-10'), 2); // Dec 21 and Dec 28 weeks out
+  });
+  await check('digest: usual and recent pace', () => {
+    const w = recentWindow('2026-11-30');
+    assert.deepStrictEqual(w, { from: '2026-10-27', to: '2026-11-30', holidayWeeks: 1 });
+    // First session Tue Sep 1: Aug 31 .. Oct 26 is 9 school weeks.
+    const p = schoolPaces({ sessionsWindow: 5, sessionsYear: 40, firstSessionDate: '2026-09-01' }, w);
+    assert.deepStrictEqual(p, { before: 35, beforeWeeks: 9, usual: 35 / 9, recent: 1, recentWeeks: 5 });
+    // Started inside the window: no usual pace.
+    assert.strictEqual(schoolPaces({ sessionsWindow: 3, sessionsYear: 3, firstSessionDate: '2026-11-02' }, w).beforeWeeks, 0);
+    assert.strictEqual(schoolPaces({ sessionsWindow: 3, sessionsYear: 9, firstSessionDate: '' }, w).beforeWeeks, 0);
+  });
+  await check('digest: pace phrasing never prints a decimal', () => {
+    assert.strictEqual(pacePhrase(9.4), 'about 9');
+    assert.strictEqual(pacePhrase(1.5), 'about 2');
+    assert.strictEqual(pacePhrase(1.49), 'about 1');
+    assert.strictEqual(pacePhrase(0.75), 'about 1');
+    assert.strictEqual(pacePhrase(0.74), 'under 1');
+    assert.strictEqual(pacePhrase(0), 'under 1');
+  });
+  await check('digest: slowing down needs 8 before over 3 school weeks, and under half the usual pace', () => {
+    const w = recentWindow('2026-11-30'); // 5 school weeks in the window
+    const slow = (win: number, year: number, first: string) => isSlowing({ sessionsWindow: win }, schoolPaces({ sessionsWindow: win, sessionsYear: year, firstSessionDate: first }, w));
+    // 10 before over 5 weeks (from Sep 28) is 2 a week; half is 1 a week = 5 in the window.
+    assert.strictEqual(slow(5, 15, '2026-09-28'), false); // exactly half: not slowing
+    assert.strictEqual(slow(4, 14, '2026-09-28'), true);
+    assert.strictEqual(slow(0, 10, '2026-09-28'), false); // none in the window: that is Stopped
+    // 7 before vs 8 before, over plenty of weeks, 1 in the window.
+    assert.strictEqual(slow(1, 8, '2026-10-12'), false);
+    assert.strictEqual(slow(1, 9, '2026-10-12'), true);
+    // 8 before over 2 weeks (from Oct 19) vs 3 weeks (from Oct 12).
+    assert.strictEqual(slow(1, 9, '2026-10-19'), false);
+    assert.strictEqual(slow(1, 9, '2026-10-12'), true);
+  });
+
+  // ---- weekly digest: names ----
+  await check('digest: all-caps feed names are title-cased, abbreviations and short consonant tokens kept', () => {
+    assert.strictEqual(displayName('SCOTT VALLEY JR HIGH'), 'Scott Valley JR High');
+    assert.strictEqual(displayName('CORONADO EL'), 'Coronado EL');
+    assert.strictEqual(displayName('G R HAMPTON ELEMENTARY SCHOOL'), 'G R Hampton Elementary School');
+    assert.strictEqual(displayName('LINCOLN K-8'), 'Lincoln K-8');
+    assert.strictEqual(displayName('KIPP DC PCS'), 'Kipp DC PCS');
+    assert.strictEqual(displayName('AMARILLO ISD'), 'Amarillo ISD');
+    assert.strictEqual(displayName("ST. MARY'S ACADEMY"), "St. Mary's Academy");
+    assert.strictEqual(displayName('Los Tules Middle'), 'Los Tules Middle'); // mixed case: untouched
+    assert.strictEqual(displayName('  '), '');
+    assert.strictEqual(shortDate('2026-09-22'), 'Sep 22');
+  });
+
+  // ---- weekly digest: sections ----
+  const TODAY = '2026-11-30'; // window Oct 27 .. Nov 30, 5 school weeks
+  const sch = (key: string, o: Partial<SchoolUsage>): SchoolUsage => ({
+    key, ncesSchoolId: key, districtKey: '', schoolName: `SCHOOL ${key}`, districtName: '', sessionsWindow: 0, activeTeachers: 0, teachersEver: 1, sessionsYear: 0, firstSessionDate: '2026-09-01', lastSessionDate: '2026-10-01', maxTeacherSessionsWindow: 0, ...o,
+  });
+  const schoolMap = (...list: SchoolUsage[]) => new Map(list.map((x) => [x.key, x]));
+  const url = (id: string) => `https://app.close.com/lead/${id}/`;
+  const opp = (leadId: string, statusLabel: string, dateUpdated: string): ActiveOpportunity => ({ leadId, statusLabel, dateUpdated });
+
+  await check('digest: section membership (an On track school can be slowing down; new, top 3, never)', () => {
+    const s = digestSections({
+      today: TODAY, leads: [], opportunities: [],
+      schools: schoolMap(
+        sch('1', { sessionsWindow: 0, sessionsYear: 3 }), // Stalled -> stopped
+        sch('2', { sessionsWindow: 0, sessionsYear: 2 }), // Silent -> never
+        sch('3', { sessionsWindow: 30, sessionsYear: 210, maxTeacherSessionsWindow: 10, activeTeachers: 5, teachersEver: 8 }), // On track, 6 vs 20 a week
+        sch('4', { sessionsWindow: 20, sessionsYear: 30, maxTeacherSessionsWindow: 8 }),
+        sch('5', { sessionsWindow: 12, sessionsYear: 20, maxTeacherSessionsWindow: 6 }),
+        sch('6', { sessionsWindow: 10, sessionsYear: 15, maxTeacherSessionsWindow: 4 }),
+        sch('7', { sessionsWindow: 9, sessionsYear: 9, firstSessionDate: '2026-10-27', maxTeacherSessionsWindow: 9 }), // new, but 4th busiest
+        sch('8', { sessionsWindow: 2, sessionsYear: 2, firstSessionDate: '2026-11-10' }), // new
+        sch('9', { sessionsWindow: 1, sessionsYear: 1, firstSessionDate: '2026-11-10' }), // too few to be new
+        sch('10', { sessionsWindow: 3, sessionsYear: 3, firstSessionDate: '2026-10-26', maxTeacherSessionsWindow: 3 }), // started the day before the window
+      ),
+    });
+    const keys = (l: Array<{ usage: SchoolUsage }>) => l.map((d) => d.usage.key);
+    assert.deepStrictEqual(keys(s.stopped), ['1']);
+    assert.deepStrictEqual(keys(s.never), ['2']);
+    assert.deepStrictEqual(keys(s.slowing), ['3']);
+    assert.strictEqual(s.slowing[0].label, 'On track');
+    assert.deepStrictEqual(keys(s.top), ['4', '5', '6']); // the slowing school is not "going well"
+    assert.deepStrictEqual(keys(s.fresh), ['7', '8']);
+    assert.strictEqual(s.onTrack, 6);
+    assert.deepStrictEqual([s.recentWeeks, s.quietWeeks], [5, 5]);
+  });
+  await check('digest: deal stage from the school lead, else the most recently updated on its district lead', () => {
+    const leads = [
+      lead({ id: 'a', name: 'Alpha Middle', schoolNces: '1', districtNces: '0077' }),
+      lead({ id: 'b', name: 'Beta Middle', schoolNces: '2', districtNces: '77' }),
+      lead({ id: 'c', name: 'Gamma Middle', schoolNces: '3' }), // no District NCES: the feed's district is used
+      lead({ id: 'dl', name: 'Seventy Seven USD', districtNces: '77' }),
+      lead({ id: 'dl2', name: '', districtNces: '077' }),
+    ];
+    const s = digestSections({
+      today: TODAY, leads,
+      opportunities: [opp('a', 'Negotiating', '2026-11-01'), opp('dl', 'Pilot Launched', '2026-10-01T00:00:00Z'), opp('dl2', 'Pilot Successful, Awaiting Budget', '2026-11-20T00:00:00Z'), opp('dl', 'Old', '2026-09-01')],
+      schools: schoolMap(sch('1', { sessionsYear: 5, districtKey: '77' }), sch('2', { sessionsYear: 4, districtKey: '77' }), sch('3', { sessionsYear: 3, districtKey: '77' })),
+    });
+    const stage = Object.fromEntries(s.stopped.map((d) => [d.usage.key, d.stage]));
+    assert.deepStrictEqual(stage, { 1: 'Negotiating', 2: 'Pilot Successful, Awaiting Budget', 3: 'Pilot Successful, Awaiting Budget' });
+    // Alpha and Beta share District NCES 77, so both show the district (the named district lead).
+    const district = Object.fromEntries(s.stopped.map((d) => [d.usage.key, d.district]));
+    assert.deepStrictEqual(district, { 1: 'Seventy Seven USD', 2: 'Seventy Seven USD', 3: '' });
+    // Lead names win over feed names.
+    assert.deepStrictEqual(s.stopped.map((d) => d.name), ['Beta Middle', 'Gamma Middle', 'Alpha Middle']);
+  });
+  await check('digest: ordering is Pilot/Awaiting Budget deals, then other deals, then by sessions this year', () => {
+    const leads = ['1', '2', '3', '4'].map((k) => lead({ id: `l${k}`, name: `School ${k}`, schoolNces: k }));
+    const s = digestSections({
+      today: TODAY, leads,
+      opportunities: [opp('l2', 'Negotiating', '2026-11-01'), opp('l3', 'pilot launched', '2026-11-01'), opp('l4', 'Proposal', '2026-11-01')],
+      schools: schoolMap(sch('1', { sessionsYear: 50 }), sch('2', { sessionsYear: 10 }), sch('3', { sessionsYear: 5 }), sch('4', { sessionsYear: 20 })),
+    });
+    assert.deepStrictEqual(s.stopped.map((d) => d.usage.key), ['3', '4', '2', '1']);
+  });
+  await check('digest: the whole text (lines, links, no-lead note, district, new, footer)', () => {
+    const leads = [
+      lead({ id: 'l1', name: 'Scott Valley Junior High', schoolNces: '1' }),
+      lead({ id: 'l2', name: 'Coronado El', schoolNces: '2', districtNces: '48' }),
+      lead({ id: 'l3', name: 'Bivins El', schoolNces: '3', districtNces: '48' }),
+      lead({ id: 'ld', name: 'Amarillo ISD', districtNces: '48' }),
+      lead({ id: 'l4', name: 'Los Tules Middle', schoolNces: '4' }),
+    ];
+    const text = buildDigest({
+      today: TODAY, weekOf: '2026-11-30', leadUrl: url, leads,
+      opportunities: [opp('l1', 'Pilot: kickoff completed', '2026-11-01'), opp('ld', 'Pilot Launched', '2026-11-02'), opp('l4', 'Pilot Successful, Awaiting Budget', '2026-11-03')],
+      schools: schoolMap(
+        sch('1', { sessionsYear: 11, lastSessionDate: '2026-10-14' }),
+        sch('2', { sessionsYear: 5, lastSessionDate: '2026-09-22', teachersEver: 2 }),
+        sch('3', { sessionsWindow: 20, sessionsYear: 25, maxTeacherSessionsWindow: 10, activeTeachers: 3, teachersEver: 4 }),
+        sch('4', { sessionsWindow: 2, sessionsYear: 52, activeTeachers: 2, teachersEver: 2, maxTeacherSessionsWindow: 1 }),
+        sch('5', { schoolName: 'MAYVILLE MIDDLE HIGH', sessionsYear: 7, lastSessionDate: '2026-10-23' }),
+        sch('6', { schoolName: 'NORTHEAST MIDDLE', sessionsWindow: 6, sessionsYear: 6, firstSessionDate: '2026-11-02', maxTeacherSessionsWindow: 6, activeTeachers: 1 }),
+        sch('7', { schoolName: 'G R HAMPTON', sessionsWindow: 4, sessionsYear: 4, firstSessionDate: '2026-11-09', maxTeacherSessionsWindow: 4, activeTeachers: 1 }),
+        sch('8', { schoolName: 'NEW TWO', sessionsWindow: 4, sessionsYear: 4, firstSessionDate: '2026-11-09', maxTeacherSessionsWindow: 4, activeTeachers: 1 }),
+        sch('9', { schoolName: 'NEW THREE', sessionsWindow: 2, sessionsYear: 2, firstSessionDate: '2026-11-16', maxTeacherSessionsWindow: 2, activeTeachers: 1 }),
+        sch('10', { schoolName: 'UPTON MIDDLE', sessionsYear: 1 }),
+        sch('11', { schoolName: 'Tradewind El', sessionsYear: 2 }),
+      ),
+    });
+    assert.strictEqual(text, [
+      '*School health, week of Nov 30*',
+      '',
+      '*Stopped:* a real start, then nothing for 5+ weeks',
+      '• *Scott Valley Junior High*: 11 sessions, none since Oct 14. 1 teacher. Pilot: kickoff completed. <https://app.close.com/lead/l1/|Open in Close>',
+      '• *Coronado El* (Amarillo ISD): 5 sessions, none since Sep 22. 2 teachers. Pilot Launched. <https://app.close.com/lead/l2/|Open in Close>',
+      '• *Mayville Middle High*: 7 sessions, none since Oct 23. 1 teacher. (no Close lead)',
+      '',
+      '*Slowing down:* well below their own usual pace',
+      '• *Los Tules Middle*: under 1 a week, was about 6. 2 of 2 teachers active. Pilot Successful, Awaiting Budget. <https://app.close.com/lead/l4/|Open in Close>',
+      '',
+      '*Going well*',
+      '• *Bivins El* (Amarillo ISD): 20 sessions in 5 weeks, 3 of 4 teachers active.',
+      '• *Northeast Middle*: 6 sessions, 1 of 1 teacher active. *G R Hampton*: 4 sessions, 1 of 1 teacher active.',
+      '• New: *New Two* and *New Three* ran 4 and 2 in their first weeks.',
+      '• 4 schools on track overall.',
+      '',
+      '*Never got going* (1 or 2 sessions): Tradewind El and Upton Middle.',
+      '',
+      'Not in Close yet: Northeast Middle. Create a lead so they show up here.',
+    ].join('\n'));
+  });
+  await check('digest: "each ran N" when equal, one new school reads "ran N in its first weeks"', () => {
+    const many = sch('9', { sessionsWindow: 50, sessionsYear: 50, maxTeacherSessionsWindow: 50 });
+    const mk = (...extra: SchoolUsage[]) => buildDigest({ today: TODAY, weekOf: '2026-11-30', leadUrl: url, leads: [], opportunities: [], schools: schoolMap(many, sch('8', { sessionsWindow: 40, sessionsYear: 40 }), sch('7', { sessionsWindow: 30, sessionsYear: 30 }), ...extra) })!;
+    const fresh = (k: string, n: number) => sch(k, { schoolName: `NEW ${k.toUpperCase()}`, sessionsWindow: n, sessionsYear: n, firstSessionDate: '2026-11-02' });
+    assert.ok(mk(fresh('a', 4), fresh('b', 4)).includes('• New: *New A* and *New B* each ran 4 in their first weeks.'));
+    assert.ok(mk(fresh('a', 3)).includes('• New: *New A* ran 3 in its first weeks.'));
+    assert.ok(mk(fresh('a', 5), fresh('b', 4), fresh('c', 3), fresh('d', 2), fresh('e', 2)).includes('• New: *New A*, *New B*, *New C* and *New D* ran 5, 4, 3 and 2 in their first weeks, plus 1 more.'));
+  });
+  await check('digest: Stopped and Slowing down cap at 10, Never got going at 10 names', () => {
+    const list: SchoolUsage[] = [];
+    for (let i = 10; i < 22; i++) list.push(sch(String(i), { sessionsYear: 3 }));
+    for (let i = 30; i < 42; i++) list.push(sch(String(i), { sessionsYear: 1 }));
+    for (let i = 50; i < 62; i++) list.push(sch(String(i), { sessionsWindow: 1, sessionsYear: 30 }));
+    const text = buildDigest({ today: TODAY, weekOf: '2026-11-30', leadUrl: url, leads: [], opportunities: [], schools: schoolMap(...list) })!;
+    const lines = text.split('\n');
+    assert.strictEqual(lines.filter((l) => l.startsWith('• ') && l.includes('none since')).length, 10);
+    assert.strictEqual(lines.filter((l) => l.startsWith('• ') && l.includes(', was ')).length, 10);
+    assert.strictEqual(lines.filter((l) => l === '…and 2 more (see Close: PT Health)').length, 2);
+    assert.ok(text.includes('School 39 and 2 more.'), text);
+  });
+  await check('digest: footer only for unmatched schools with 5+ in the window', () => {
+    const mk = (n: number) => buildDigest({ today: TODAY, weekOf: '2026-11-30', leadUrl: url, leads: [], opportunities: [], schools: schoolMap(sch('1', { schoolName: 'NO LEAD', sessionsWindow: n, sessionsYear: 20, maxTeacherSessionsWindow: n })) })!;
+    assert.ok(mk(5).endsWith('Not in Close yet: No Lead. Create a lead so they show up here.'));
+    assert.ok(!mk(4).includes('Not in Close yet'));
+  });
+  await check('digest: nothing at all -> no post', () => {
+    assert.strictEqual(buildDigest({ today: TODAY, weekOf: '2026-11-30', leadUrl: url, leads: [], opportunities: [], schools: new Map() }), null);
+  });
+  await check('digest: Mondays only, never in a holiday week, any day when forced', () => {
+    assert.strictEqual(digestSkipReason('2026-12-07'), null);
+    assert.strictEqual(digestSkipReason('2026-12-02'), 'not a Monday');
+    assert.strictEqual(digestSkipReason('2026-11-23'), 'holiday week');
+    assert.strictEqual(digestSkipReason('2026-12-28'), 'holiday week');
+    assert.strictEqual(digestSkipReason('2026-12-02', true), null);
+    assert.strictEqual(digestSkipReason('2026-11-23', true), null);
+  });
+
   // ---- whole runs on fakes ----
-  await check('run, dry: computes everything, writes nothing, creates no fields, posts one summary', async () => {
+  await check('run, dry (a Wednesday): computes everything, writes nothing, creates no fields, posts nothing', async () => {
     delete process.env.USAGE_HEALTH_MODE;
     const f = fake();
     const r = await runUsageHealth({ now: WED }, f.deps);
@@ -285,20 +487,15 @@ async function main() {
     assert.deepStrictEqual(f.ensured, []);
     assert.deepStrictEqual([r.schools, r.matched, r.unmatched, r.duplicates, r.districtRollups, r.leadsToUpdate, r.updated], [4, 3, 1, 1, 1, 4, 0]);
     assert.deepStrictEqual(r.labelCounts, { 'On track': 2, Light: 1, Stalled: 1, Silent: 0 });
-    assert.strictEqual(f.notes.length, 1);
-    assert.deepStrictEqual([f.reports.length, f.warnings.length], [1, 0]); // the summary is a report
-    const note = f.notes[0];
-    for (const want of ['DRY RUN', 'On track 2, Light 1, Stalled 1, Silent 0', 'Would update 3 school leads (1 already up to date, 1 no longer in the usage data and going Silent) and 1 district lead', 'San Ramon Valley Unified: 2 schools: 1 on track, 1 light', 'No Lead Elementary (000000000777): 6 in the window, 6 this year', '63513007356: using "Bollinger Canyon Elementary", ignoring 1 other']) {
-      assert.ok(note.includes(want), `summary is missing: ${want}\n${note}`);
-    }
-    assert.ok(!/srvusd|peerteach\.org|@/.test(note), 'summary must not carry teacher emails or domains');
+    assert.deepStrictEqual([f.notes.length, f.oppReads], [0, 0]);
+    assert.strictEqual(r.digest, 'not a Monday');
   });
   await check('run, dry: ?dry_run=1 wins over USAGE_HEALTH_MODE=live', async () => {
     process.env.USAGE_HEALTH_MODE = 'live';
     const f = fake();
     const r = await runUsageHealth({ now: WED, forceDry: true }, f.deps);
     assert.strictEqual(r.mode, 'dry');
-    assert.deepStrictEqual([f.updates.length, f.ensured.length, f.notes.length], [0, 0, 1]);
+    assert.deepStrictEqual([f.updates.length, f.ensured.length, f.notes.length], [0, 0, 0]);
   });
   await check('run, dry: fields that do not exist yet are reported, not created', async () => {
     delete process.env.USAGE_HEALTH_MODE;
@@ -309,7 +506,7 @@ async function main() {
     assert.strictEqual(r.leadsToUpdate, 4);
     assert.deepStrictEqual([f.updates.length, f.ensured.length], [0, 0]);
   });
-  await check('run, live (a Wednesday): exactly the changed leads get exactly these fields; only the unmatched alert is posted', async () => {
+  await check('run, live (a Wednesday): exactly the changed leads get exactly these fields; nothing is posted', async () => {
     process.env.USAGE_HEALTH_MODE = 'live';
     const f = fake();
     const r = await runUsageHealth({ now: WED }, f.deps);
@@ -320,31 +517,53 @@ async function main() {
     assert.deepStrictEqual([r.updated, r.failed, r.deferred], [4, 0, 0]);
     assert.strictEqual(f.ensured.length, 7);
     assert.strictEqual(f.fetches.length, 1);
-    assert.strictEqual(f.notes.length, 1);
-    assert.ok(f.notes[0].includes('1 active school has no Close lead') && f.notes[0].includes('No Lead Elementary (000000000777)'), f.notes[0]);
-  });
-  await check('run, live: a quiet day posts nothing', async () => {
-    process.env.USAGE_HEALTH_MODE = 'live';
-    const quiet = feed();
-    quiet.teachers = quiet.teachers.filter((t) => t.teacher_id !== '5');
-    const f = fake({ fetchUsage: async () => quiet });
-    await runUsageHealth({ now: WED }, f.deps);
     assert.deepStrictEqual(f.notes, []);
   });
-  await check('run, live (a Monday): schools that slipped over the week are listed with their Close link', async () => {
+  const MON_DIGEST = [
+    '*School health, week of Dec 7*',
+    '',
+    '*Stopped:* a real start, then nothing for 5+ weeks',
+    '• *Private Academy*: 4 sessions, none since Oct 1. 1 teacher. <https://app.close.com/lead/lead_private/|Open in Close>',
+    '',
+    '*Going well*',
+    '• *No Lead Elementary*: 6 sessions in 5 weeks, 1 of 1 teacher active.',
+    '• *Bollinger Canyon Elementary* (San Ramon Valley Unified): 4 sessions, 2 of 2 teachers active. *Unchanged School* (San Ramon Valley Unified): 2 sessions, 1 of 1 teacher active.',
+    '• 2 schools on track overall.',
+    '',
+    'Not in Close yet: No Lead Elementary. Create a lead so they show up here.',
+  ].join('\n');
+  await check('run (a Monday, dry and live): one digest to the health channel, one feed read, Close writes only when live', async () => {
+    for (const mode of ['dry', 'live']) {
+      process.env.USAGE_HEALTH_MODE = mode;
+      const f = fake({ fetchUsage: async (q) => { f.fetches.push(q); return feed('2026-12-06'); } });
+      const r = await runUsageHealth({ now: MON }, f.deps);
+      assert.strictEqual(r.ok, true);
+      assert.deepStrictEqual(f.fetches, [{ since: '2026-08-01', from: '2026-11-03', to: '2026-12-07' }]);
+      assert.deepStrictEqual([f.reports.length, f.warnings.length, f.oppReads], [1, 0, 1]);
+      assert.strictEqual(f.reports[0], MON_DIGEST, `${mode}:\n${f.reports[0]}`);
+      assert.strictEqual(r.digest, 'posted');
+      assert.strictEqual(f.updates.length, mode === 'live' ? 4 : 0);
+    }
+  });
+  await check('run: ?digest=1 posts the digest on a Wednesday (dry run respected)', async () => {
     process.env.USAGE_HEALTH_MODE = 'live';
     const f = fake();
-    // Last week's window had "Unchanged School" at 3 sessions (On track); it is Light now.
-    f.deps.fetchUsage = async (q) => { f.fetches.push(q); return f.fetches.length === 1 ? feed('2026-12-06') : feed('2026-12-06', 3); };
+    const r = await runUsageHealth({ now: WED, forceDry: true, forceDigest: true }, f.deps);
+    assert.deepStrictEqual([r.mode, r.digest, f.updates.length, f.reports.length], ['dry', 'posted', 0, 1]);
+    assert.ok(f.reports[0].startsWith('*School health, week of Nov 30*'), f.reports[0]);
+  });
+  await check('run: a Monday in a holiday week posts nothing', async () => {
+    process.env.USAGE_HEALTH_MODE = 'live';
+    const f = fake({ fetchUsage: async () => feed('2026-12-24') });
+    const r = await runUsageHealth({ now: new Date('2026-12-28T12:30:00Z') }, f.deps);
+    assert.deepStrictEqual([r.ok, r.digest, f.notes.length, f.oppReads], [true, 'holiday week', 0, 0]);
+  });
+  await check('run, live (a Monday): if the deals cannot be read, Close is still written and a warning says why', async () => {
+    process.env.USAGE_HEALTH_MODE = 'live';
+    const f = fake({ fetchUsage: async () => feed('2026-12-06'), activeOpportunities: async () => { throw new Error('close 503'); } });
     const r = await runUsageHealth({ now: MON }, f.deps);
-    assert.strictEqual(r.ok, true);
-    assert.deepStrictEqual(f.fetches, [{ since: '2026-08-01', from: '2026-11-03', to: '2026-12-07' }, { since: '2026-08-01', from: '2026-10-27', to: '2026-11-30' }]);
-    assert.strictEqual(r.slipped, 1);
-    const slipped = f.notes.find((n) => n.includes('slipped'));
-    assert.ok(slipped && slipped.includes('• Unchanged School: On track → Light, last session 2026-11-10 (<https://app.close.com/lead/lead_same/|open in Close>)'), String(slipped));
-    assert.ok(!slipped!.includes('Bollinger'));
-    assert.strictEqual(f.notes.length, 2); // the unmatched alert and the slipped list
-    assert.deepStrictEqual([f.reports.length, f.warnings.length], [2, 0]); // both are reports
+    assert.deepStrictEqual([r.ok, r.digest, f.updates.length, f.reports.length, f.warnings.length], [true, 'failed', 4, 0, 1]);
+    assert.ok(f.warnings[0].includes('digest could not be built') && f.warnings[0].includes('close 503'), f.warnings[0]);
   });
   await check('run: a stale feed writes nothing to Close and posts a warning (live and dry)', async () => {
     for (const mode of ['live', 'dry']) {

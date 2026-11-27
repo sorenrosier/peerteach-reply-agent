@@ -4,7 +4,8 @@ import { runUsageHealth } from '../src/usageHealth';
 // GET /api/sync-usage-health, run nightly by Vercel Cron (12:30 UTC, after the product's 10:35
 // UTC usage feed): writes each school's usage health onto its Close lead (see
 // src/usageHealth.ts). Dry run unless USAGE_HEALTH_MODE=live; ?dry_run=1 forces a dry run for one
-// call. Vercel signs cron requests with a bearer token matching CRON_SECRET; anything else is
+// call. The school health digest posts on Mondays (Pacific); ?digest=1 posts it on any day, for
+// checking it by hand (combine with ?dry_run=1 to write nothing to Close). Vercel signs cron requests with a bearer token matching CRON_SECRET; anything else is
 // rejected.
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   const cronSecret = process.env.CRON_SECRET;
@@ -21,7 +22,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   }
   try {
     const dry = String(req.query.dry_run ?? '');
-    const result = await runUsageHealth({ forceDry: dry === '1' || dry === 'true' });
+    const digest = String(req.query.digest ?? '');
+    const result = await runUsageHealth({ forceDry: dry === '1' || dry === 'true', forceDigest: digest === '1' || digest === 'true' });
     res.status(result.ok ? 200 : 500).json(result);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
