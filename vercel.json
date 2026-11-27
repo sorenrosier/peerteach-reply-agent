@@ -11,7 +11,8 @@
     "api/send-followups.ts": { "maxDuration": 120 },
     "api/send-teacher-nudges.ts": { "maxDuration": 60 },
     "api/send-remy-followups.ts": { "maxDuration": 120 },
-    "api/sync-close.ts": { "maxDuration": 120 }
+    "api/sync-close.ts": { "maxDuration": 120 },
+    "api/sync-usage-health.ts": { "maxDuration": 300 }
   },
   "crons": [
     { "path": "/api/cleanup-holds", "schedule": "0 * * * *" },
@@ -20,6 +21,7 @@
     { "path": "/api/send-followups", "schedule": "20 * * * *" },
     { "path": "/api/send-teacher-nudges", "schedule": "40 * * * *" },
     { "path": "/api/send-remy-followups", "schedule": "45 12-22 * * 1-5" },
-    { "path": "/api/sync-close", "schedule": "5,20,35,50 * * * *" }
+    { "path": "/api/sync-close", "schedule": "5,20,35,50 * * * *" },
+    { "path": "/api/sync-usage-health", "schedule": "30 12 * * *" }
   ]
 }

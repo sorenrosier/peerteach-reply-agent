@@ -315,6 +315,23 @@ All agent behavior is controlled in `src/agent.ts`:
 - **Sender identity** — in `getSenderIdentity()`. Add new senders by checking `email_account`.
 - **Max iterations** — `MAX_ITERATIONS = 8`. This is how many back-and-forth Claude API calls can happen per webhook. 8 covers the most complex flows (e.g. two separate availability lookups for "Tuesday or Thursday afternoon," plus a booking, plus the draft).
 
+## Usage health on Close leads
+
+A nightly job (`GET /api/sync-usage-health`, Vercel Cron at 12:30 UTC) reads per-teacher usage from the Sales Ops app and writes each school's health onto its Close lead, so the team can see which schools are thriving. Code: `src/usageHealth.ts` (reading, writing, Slack) and `src/usageHealthRules.ts` (the rules, no I/O).
+
+- **Labels** (`PT Health`): *On track* = some teacher ran 3+ sessions in the recent window; *Light* = sessions, but no teacher with 3; *Stalled* = none in the window, 3+ earlier this school year; *Silent* = none in the window, fewer than 3 this year. The window is the last 28 days, stretched back 7 days for each holiday week it touches (Thanksgiving, Dec 25, Jan 1). The school year starts August 1.
+- **Fields written** (text lead fields, created on the first live run): `PT Health`, `PT Sessions (28d)`, `PT Active Teachers (28d)`, `PT Teachers Ever`, `PT Last Session`, `PT Health Updated`, and on district leads only `PT Schools Health` (e.g. `6 schools: 3 on track, 2 light, 1 stalled`).
+- **Matching**: by `School NCES`, ignoring leading zeros. When several leads share an ID, the named lead wins (oldest first) and the others are never written. A school with no lead is reported, never created. Leads with no usage this year are left alone.
+- **Safety**: dry run unless `USAGE_HEALTH_MODE=live` (`?dry_run=1` forces a dry run for one call). A dry run posts a summary of what it would write. If the feed's newest usage is more than 4 days old, nothing is written and Slack gets a warning. A lead is only updated when a value changes.
+- **Slack** (live): errors, stale-feed warnings, schools with 5+ recent sessions and no Close lead, and on Mondays (Pacific) the schools whose label got worse over the past week.
+- **Env**: `CLOSE_API_KEY`, `PEERTEACH_USAGE_SECRET`, `USAGE_HEALTH_MODE`, and optionally `SALES_OPS_HEALTH_URL` and `HEALTH_EXCLUDED_TEACHER_IDS` (comma-separated teacher IDs to leave out; `peerteach.org` and `leanlabeducation.org` emails are always left out).
+
+Check the rules offline (no API calls):
+
+```bash
+npx ts-node scripts/checkUsageHealth.ts
+```
+
 ---
 
 ## File structure
