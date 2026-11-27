@@ -12,7 +12,7 @@
     "api/send-teacher-nudges.ts": { "maxDuration": 60 },
     "api/send-remy-followups.ts": { "maxDuration": 120 },
     "api/sync-close.ts": { "maxDuration": 120 },
-    "api/sync-usage-health.ts": { "maxDuration": 300 }
+    "api/sync-usage-health.ts": { "maxDuration": 120 }
   },
   "crons": [
     { "path": "/api/cleanup-holds", "schedule": "0 * * * *" },

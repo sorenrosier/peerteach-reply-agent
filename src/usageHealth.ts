@@ -46,7 +46,7 @@ const MIN_PAIRS = 2; // a real session has at least two pairs
 const LEADS_QUERY = '"custom.School NCES":* or "custom.District NCES":*';
 // Time budget: stop writing after this, so the run finishes inside its limit. Whatever is left
 // still differs from Close tomorrow night, so the next run picks it up.
-const RUN_BUDGET_MS = 240_000;
+const RUN_BUDGET_MS = 90_000;
 
 export const isLive = () => envOptional('USAGE_HEALTH_MODE') === 'live';
 
