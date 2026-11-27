@@ -146,6 +146,13 @@ async function main() {
   process.env.HEALTH_EXCLUDED_TEACHER_IDS = '999';
 
   // ---- the lapse window ----
+  await check('run days: LAPSE_NUDGE_RUN_ON lets a hand-started run go on that one day only', () => {
+    // Friday of Thanksgiving week.
+    assert.notStrictEqual(noRunReason('2026-11-27'), null);
+    assert.strictEqual(noRunReason('2026-11-27', { runOn: '2026-11-27' }), null);
+    assert.notStrictEqual(noRunReason('2026-11-28', { runOn: '2026-11-27' }), null);
+    assert.strictEqual(noRunReason('2027-07-06', { runOn: '2027-07-06' }), 'summer pause');
+  });
   await check('window: 21 quiet days in mid-October', () => {
     assert.strictEqual(quietDays('2026-10-14', 21), 21);
     assert.strictEqual(lastBefore('2026-10-14'), '2026-09-23');
