@@ -85,16 +85,18 @@ function feed(latest = '2026-12-01', sameSchoolWindow = 2) {
   };
 }
 
-interface Fake { deps: UsageHealthDeps; updates: Array<{ id: string; body: Record<string, any> }>; notes: string[]; fetches: any[]; ensured: string[]; listed: number }
+interface Fake { deps: UsageHealthDeps; updates: Array<{ id: string; body: Record<string, any> }>; notes: string[]; warnings: string[]; reports: string[]; fetches: any[]; ensured: string[]; listed: number }
 function fake(over: Partial<UsageHealthDeps> = {}): Fake {
-  const f: Fake = { updates: [], notes: [], fetches: [], ensured: [], listed: 0, deps: null as any };
+  const f: Fake = { updates: [], notes: [], warnings: [], reports: [], fetches: [], ensured: [], listed: 0, deps: null as any };
   f.deps = {
     fetchUsage: async (q) => { f.fetches.push(q); return feed(); },
     leadFieldIds: async () => new Map(IDS),
     ensureLeadTextField: async (name) => { f.ensured.push(name); return `cf_${name}`; },
     listLeads: async () => { f.listed++; return closeLeads(); },
     updateLead: async (id, body) => { f.updates.push({ id, body }); },
-    postNote: async (text) => { f.notes.push(text); },
+    // `notes` is everything posted, in order; `warnings` and `reports` say which channel got it.
+    postNote: async (text) => { f.notes.push(text); f.warnings.push(text); },
+    postReport: async (text) => { f.notes.push(text); f.reports.push(text); },
     ...over,
   };
   return f;
@@ -284,6 +286,7 @@ async function main() {
     assert.deepStrictEqual([r.schools, r.matched, r.unmatched, r.duplicates, r.districtRollups, r.leadsToUpdate, r.updated], [4, 3, 1, 1, 1, 4, 0]);
     assert.deepStrictEqual(r.labelCounts, { 'On track': 2, Light: 1, Stalled: 1, Silent: 0 });
     assert.strictEqual(f.notes.length, 1);
+    assert.deepStrictEqual([f.reports.length, f.warnings.length], [1, 0]); // the summary is a report
     const note = f.notes[0];
     for (const want of ['DRY RUN', 'On track 2, Light 1, Stalled 1, Silent 0', 'Would update 3 school leads (1 already up to date, 1 no longer in the usage data and going Silent) and 1 district lead', 'San Ramon Valley Unified: 2 schools: 1 on track, 1 light', 'No Lead Elementary (000000000777): 6 in the window, 6 this year', '63513007356: using "Bollinger Canyon Elementary", ignoring 1 other']) {
       assert.ok(note.includes(want), `summary is missing: ${want}\n${note}`);
@@ -341,6 +344,7 @@ async function main() {
     assert.ok(slipped && slipped.includes('• Unchanged School: On track → Light, last session 2026-11-10 (<https://app.close.com/lead/lead_same/|open in Close>)'), String(slipped));
     assert.ok(!slipped!.includes('Bollinger'));
     assert.strictEqual(f.notes.length, 2); // the unmatched alert and the slipped list
+    assert.deepStrictEqual([f.reports.length, f.warnings.length], [2, 0]); // both are reports
   });
   await check('run: a stale feed writes nothing to Close and posts a warning (live and dry)', async () => {
     for (const mode of ['live', 'dry']) {
@@ -351,6 +355,7 @@ async function main() {
       assert.deepStrictEqual([f.updates.length, f.ensured.length, f.listed], [0, 0, 0]);
       assert.strictEqual(f.notes.length, 1);
       assert.ok(f.notes[0].includes('stale') && f.notes[0].includes('2026-11-18'));
+      assert.deepStrictEqual([f.warnings.length, f.reports.length], [1, 0]); // a warning: main channel
     }
   });
   await check('run: in summer nothing is read, written or posted', async () => {

@@ -58,7 +58,17 @@ function uniboxButton(payload: InstantlyWebhookPayload) {
   };
 }
 
-async function postMessage(blocks: any[], fallbackText: string): Promise<string | undefined> {
+// `channel` is for reports that have their own channel. If posting there fails (the bot was never
+// invited, the ID is wrong) the message goes to the main channel instead, so it is never lost.
+async function postMessage(blocks: any[], fallbackText: string, channel?: string): Promise<string | undefined> {
+  if (channel && channel !== env('SLACK_CHANNEL_ID')) {
+    try {
+      const res = await client().chat.postMessage({ channel, text: fallbackText, blocks });
+      return res.ts as string | undefined;
+    } catch (err) {
+      console.error(`[slack] postMessage to ${channel} failed, using the main channel:`, err instanceof Error ? err.message : String(err));
+    }
+  }
   try {
     const res = await client().chat.postMessage({
       channel: env('SLACK_CHANNEL_ID'),
@@ -686,8 +696,8 @@ export async function postProactiveApproval(params: {
 
 // A plain heads-up in the channel (no buttons): something happened that a person should know
 // about or do by hand.
-export async function postInfoNote(text: string): Promise<void> {
-  await postMessage([{ type: 'section', text: { type: 'mrkdwn', text } }], text.slice(0, 150));
+export async function postInfoNote(text: string, channel?: string): Promise<void> {
+  await postMessage([{ type: 'section', text: { type: 'mrkdwn', text } }], text.slice(0, 150), channel);
 }
 
 // A private note to whoever clicked, leaving the card itself untouched (used when a click is
