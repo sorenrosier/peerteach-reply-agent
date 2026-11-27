@@ -324,6 +324,7 @@ A nightly job (`GET /api/sync-usage-health`, Vercel Cron at 12:30 UTC) reads per
 - **Matching**: by `School NCES`, ignoring leading zeros. When several leads share an ID, the named lead wins (oldest first) and the others are never written. A school with no lead is reported, never created. Leads with no usage this year are left alone.
 - **Safety**: dry run unless `USAGE_HEALTH_MODE=live` (`?dry_run=1` forces a dry run for one call). A dry run posts a summary of what it would write. If the feed's newest usage is more than 4 days old, nothing is written and Slack gets a warning. A lead is only updated when a value changes.
 - **Quiet times**: holiday weeks (Thanksgiving, Dec 25, Jan 1) don't count towards a stale feed, and from June 15 to August 20 the job does nothing, so spring's labels stay on the leads.
+- **Where it posts**: summaries, unmatched schools and the Monday list go to `USAGE_HEALTH_SLACK_CHANNEL` if set (invite the bot to it); errors and stale-feed warnings always go to the main channel. If the bot can't post to the health channel, the message goes to the main one.
 - **Slack** (live): errors, stale-feed warnings, schools with 5+ recent sessions and no Close lead, and on Mondays (Pacific) the schools whose label got worse over the past week.
 - **Env**: `CLOSE_API_KEY`, `PEERTEACH_USAGE_SECRET`, `USAGE_HEALTH_MODE`, and optionally `SALES_OPS_HEALTH_URL` and `HEALTH_EXCLUDED_TEACHER_IDS` (comma-separated teacher IDs to leave out; `peerteach.org` and `leanlabeducation.org` emails are always left out).
 

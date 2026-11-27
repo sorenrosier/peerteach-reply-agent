@@ -59,7 +59,8 @@ export interface UsageHealthDeps {
   ensureLeadTextField(name: string): Promise<string>;
   listLeads(query: string, customFieldIdList: string[]): Promise<CloseLeadRow[]>;
   updateLead(leadId: string, body: Record<string, any>): Promise<void>;
-  postNote(text: string): Promise<void>;
+  postNote(text: string): Promise<void>; // warnings and errors: the main channel, where they get seen
+  postReport(text: string): Promise<void>; // summaries and the Monday list: the health channel
 }
 
 async function fetchUsage(q: UsageQuery): Promise<any> {
@@ -73,7 +74,12 @@ async function fetchUsage(q: UsageQuery): Promise<any> {
   return res.data;
 }
 
-const realDeps: UsageHealthDeps = { fetchUsage, leadFieldIds: () => customFieldIds('lead'), ensureLeadTextField, listLeads, updateLead, postNote: postInfoNote };
+const realDeps: UsageHealthDeps = { fetchUsage, leadFieldIds: () => customFieldIds('lead'), ensureLeadTextField, listLeads, updateLead,
+  postNote: (text) => postInfoNote(text),
+  // USAGE_HEALTH_SLACK_CHANNEL keeps the nightly summaries out of the channel where drafts wait
+  // for a decision. Unset, or if the bot can't post there, they go to the main channel.
+  postReport: (text) => postInfoNote(text, envOptional('USAGE_HEALTH_SLACK_CHANNEL') || undefined),
+};
 
 export interface UsageHealthResult {
   ok: boolean;
@@ -121,11 +127,13 @@ export async function runUsageHealth(opts: { forceDry?: boolean; now?: Date } = 
   const now = opts.now ?? new Date();
   const today = now.toISOString().slice(0, 10);
   const result: UsageHealthResult = { ok: true, mode: live ? 'live' : 'dry', today, schools: 0, matched: 0, unmatched: 0, duplicates: 0, districtRollups: 0, leadsToUpdate: 0, updated: 0, failed: 0, deferred: 0, slipped: 0 };
-  const post = async (text: string) => {
+  const send = async (text: string, how: (part: string) => Promise<void>) => {
     for (const part of chunkLines(text)) {
-      try { await deps.postNote(part); } catch (err) { console.warn('[usageHealth] Slack post failed:', closeErrorText(err)); }
+      try { await how(part); } catch (err) { console.warn('[usageHealth] Slack post failed:', closeErrorText(err)); }
     }
   };
+  const post = (text: string) => send(text, (part) => deps.postNote(part));
+  const report = (text: string) => send(text, (part) => deps.postReport(part));
   try {
     const t0 = Date.now();
     if (isSummerPause(today)) {
@@ -182,12 +190,12 @@ export async function runUsageHealth(opts: { forceDry?: boolean; now?: Date } = 
     for (const u of plan.unmatched) console.log(`[usageHealth] no Close lead for ${u.schoolName || '(no name)'} ${u.ncesSchoolId}: ${u.sessionsWindow} in window, ${u.sessionsYear} this year`);
 
     if (!live) {
-      await post(dryRunSummary(plan, { from: window.from, to: window.to, latestUsageDate: result.latestUsageDate }));
+      await report(dryRunSummary(plan, { from: window.from, to: window.to, latestUsageDate: result.latestUsageDate }));
     } else {
       if (result.failed || result.deferred) await post(`:warning: *Usage health:* ${result.updated} lead${result.updated === 1 ? '' : 's'} updated in Close, ${result.failed} failed, ${result.deferred} left for the next run (out of time). Details are in the function logs.`);
       const alert = unmatchedAlert(plan);
-      if (alert) await post(alert);
-      if (isMondayPacific(now)) result.slipped = await postSlipped(plan, { since, today, excluded }, deps, post);
+      if (alert) await report(alert);
+      if (isMondayPacific(now)) result.slipped = await postSlipped(plan, { since, today, excluded }, deps, post, report);
     }
     console.log(`[usageHealth] ${JSON.stringify(result)}`);
     return result;
@@ -211,6 +219,7 @@ async function postSlipped(
   ctx: { since: string; today: string; excluded: Set<string> },
   deps: UsageHealthDeps,
   post: (text: string) => Promise<void>,
+  report: (text: string) => Promise<void>,
 ): Promise<number> {
   try {
     const then = recentWindow(addDays(ctx.today, -7));
@@ -219,7 +228,7 @@ async function postSlipped(
     for (const [key, s] of aggregateSchools(teachersOf(body), ctx.excluded)) before.set(key, healthLabel(s));
     const slipped = slippedSchools(plan.matched, before, closeLeadUrl);
     const text = slippedMessage(slipped);
-    if (text) await post(text);
+    if (text) await report(text);
     return slipped.length;
   } catch (err) {
     console.error('[usageHealth] slipped list failed:', closeErrorText(err));
