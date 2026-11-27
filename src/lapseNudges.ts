@@ -251,7 +251,7 @@ export async function runLapseNudges(opts: { dryRun?: boolean; now?: Date } = {}
       result[kind]++;
     }
 
-    const summary = summaryLine({ mode, cards: result.cards, heldOut: result.heldOut, waiting: result.waitingContact + result.waitingSchoolLimit + result.deferred });
+    const summary = summaryLine({ mode, senderName: senderName(), cards: result.cards, heldOut: result.heldOut, waiting: result.waitingContact + result.waitingSchoolLimit + result.deferred });
     if (summary) await post(summary, deps.postReport);
     return finish();
   } catch (err) {

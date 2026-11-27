@@ -1,7 +1,8 @@
 import { CloseEmailRow, CloseUser, closeErrorText, closeLeadUrl, createLeadEmail, findUserByEmail, listLeadEmailsSince } from './closeCrm';
-import { notifyClickerViaResponseUrl, openModal, postInfoNote, updateMessage, updateViaResponseUrl } from './slack';
+import { fetchMessageBlocks, notifyClickerViaResponseUrl, openModal, postEphemeral, postInfoNote, updateMessage, updateViaResponseUrl } from './slack';
+import { stateTimeZone } from './teacherNudges';
 import { NudgeRecord, nudgeMode, recordNudge, senderEmail, senderLabel, senderName } from './lapseNudges';
-import { ACTION, ACTION_PREFIX, CardData, EDIT_MODAL, NudgeAction, NudgeEmail, NudgeMode, cardBlocks, cardIsOpen, contactedSince, doneBlocks, editModal, parseCardData, readCardEmail, readEditModal } from './lapseNudgeRules';
+import { ACTION, ACTION_PREFIX, CardData, EDIT_MODAL, NudgeAction, NudgeEmail, NudgeMode, cardBlocks, cardIsOpen, contactedSince, doneBlocks, editModal, outsideSendHours, parseCardData, readCardEmail, readEditModal, stateFromNces } from './lapseNudgeRules';
 import { SlackActionPayload } from './types';
 
 // What happens when someone clicks a button on a check-in card (src/lapseNudges.ts posts them).
@@ -26,12 +27,14 @@ export interface NudgeActionDeps {
   tellClicker(responseUrl: string, text: string): Promise<void>; // only they see it; the card is untouched
   openModal(triggerId: string, view: any): Promise<void>;
   updateMessage(channel: string, ts: string, text: string, blocks: any[]): Promise<void>;
+  messageBlocks(channel: string, ts: string): Promise<any[] | null>; // the card as it is now; null if unreadable
+  tellUser(channel: string, userId: string, text: string): Promise<void>; // only they see it
   postNote(text: string): Promise<void>; // the main channel
 }
 
 const realDeps: NudgeActionDeps = {
   recordNudge, leadEmailsSince: listLeadEmailsSince, findSender: findUserByEmail, createEmail: createLeadEmail,
-  updateCard: updateViaResponseUrl, tellClicker: notifyClickerViaResponseUrl, openModal, updateMessage,
+  updateCard: updateViaResponseUrl, tellClicker: notifyClickerViaResponseUrl, openModal, updateMessage, messageBlocks: fetchMessageBlocks, tellUser: postEphemeral,
   postNote: (text) => postInfoNote(text),
 };
 
@@ -40,11 +43,19 @@ const sending = new Set<string>();
 
 const tsToIso = (ts: string) => new Date(Number(ts) * 1000).toISOString();
 
+// The teacher's time zone: their state when the feed gave one, else the state their school's
+// NCES ID starts with, else Pacific.
+export function teacherTimeZone(d: Pick<CardData, 's' | 'st'>): string {
+  const state = d.st || stateFromNces(d.s);
+  return state ? stateTimeZone(state) : 'America/Los_Angeles';
+}
+
 export async function handleLapseNudgeAction(
   action: SlackActionPayload['actions'][number],
   payload: SlackActionPayload,
   deps: NudgeActionDeps = realDeps,
   mode: NudgeMode = nudgeMode(),
+  now: Date = new Date(),
 ): Promise<void> {
   const url = payload.response_url;
   const d = parseCardData(action.value);
@@ -89,6 +100,10 @@ export async function handleLapseNudgeAction(
       if (mode === 'preview') { await deps.tellClicker(url, ':eyes: Preview only: sending is switched off. Nothing was sent.'); return; }
       const email = readCardEmail(payload.message?.blocks);
       if (!email) { await deps.tellClicker(url, ':warning: Could not read the email from this card. Nothing was sent.'); return; }
+      // Live only: an approved email leaves at once, so not at night or on a weekend where the
+      // teacher is. A draft sits in the sender's mailbox and can be saved at any hour.
+      const late = mode === 'live' ? outsideSendHours(now, teacherTimeZone(d)) : null;
+      if (late) { await deps.tellClicker(url, `:clock9: It's ${late} for this teacher. Approve again on a weekday between 7am and 6pm their time.`); return; }
       const key = `${d.t}|${d.k}|${d.l}`;
       if (sending.has(key)) { await deps.tellClicker(url, ':information_source: This check-in is already being sent. This click was ignored.'); return; }
       sending.add(key);
@@ -116,17 +131,18 @@ async function approve(
   // Ask Close first: an email to or from this teacher on the lead since the card went up means
   // this check-in already went out (a second click) or someone got in touch by hand.
   const since = tsToIso(c.ts);
+  const draft = c.mode === 'draft';
+  const nothing = draft ? 'No draft was saved' : 'Nothing was sent';
   try {
     if (contactedSince(await deps.leadEmailsSince(d.lead, since), d.to, since)) {
       console.warn(`[lapseNudges] Approve ignored for teacher ${d.t}: an email with ${d.to} is on the lead since the card was posted`);
-      await deps.tellClicker(c.url, `:information_source: Nothing was sent: Close already has an email to or from ${d.to} on this school since this card was posted, so this check-in has gone out or someone has been in touch. Skip the card if it is no longer needed.`);
+      await deps.tellClicker(c.url, `:information_source: ${nothing}: Close already has an email to or from ${d.to} on this school since this card was posted, so this check-in has gone out or someone has been in touch. Skip the card if it is no longer needed.`);
       return;
     }
   } catch (err) {
-    await deps.tellClicker(c.url, `:warning: Nothing was sent: could not check Close for an earlier send (\`${closeErrorText(err).slice(0, 200)}\`). Try again in a minute.`);
+    await deps.tellClicker(c.url, `:warning: ${nothing}: could not check Close for an earlier one (\`${closeErrorText(err).slice(0, 200)}\`). Try again in a minute.`);
     return;
   }
-  const draft = c.mode === 'draft';
   await deps.updateCard(c.url, 'Working on it', doneBlocks(`:hourglass_flowing_sand: ${draft ? 'Saving a draft' : 'Sending'}… (approved by ${c.who})`, d, email));
   try {
     const user = await deps.findSender(senderEmail());
@@ -137,7 +153,7 @@ async function approve(
     const msg = closeErrorText(err);
     console.error(`[lapseNudges] Close email failed for teacher ${d.t}:`, msg);
     await tryRecord(row('failed', msg.slice(0, 300)));
-    await deps.updateCard(c.url, 'Close could not create the email', cardBlocks(d, email, { mode: c.mode, sender: senderLabel(), leadUrl: closeLeadUrl(d.lead), note: `:warning: Close could not create the email when ${c.who} approved it, so nothing was sent: \`${msg.slice(0, 300)}\`. You can click again.` }));
+    await deps.updateCard(c.url, 'Close could not create the email', cardBlocks(d, email, { mode: c.mode, sender: senderLabel(), leadUrl: closeLeadUrl(d.lead), note: `:warning: Close could not create the email when ${c.who} approved it, so ${draft ? 'no draft was saved' : 'nothing was sent'}: \`${msg.slice(0, 300)}\`. You can click again.` }));
     return;
   }
   // A Close draft is recorded as "sent" too: from here on it is in the sender's hands.
@@ -160,11 +176,23 @@ export function lapseNudgeEditErrors(payload: any): Record<string, string> | nul
   return null;
 }
 
-// Puts the edited email on the card. Nothing is sent or recorded: the card keeps its buttons and
-// Approve sends what it now shows.
+// Puts the edited email on the card, if the card is still open. Nothing is sent or recorded: the
+// card keeps its buttons and Approve sends what it now shows.
 export async function applyLapseNudgeEdit(payload: any, deps: NudgeActionDeps = realDeps, mode: NudgeMode = nudgeMode()): Promise<void> {
   const edit = readEditModal(payload?.view);
   if (!edit) return;
+  // Someone may have approved or skipped the card while this window was open. Look at the card
+  // as it is now: unless it still has its buttons it is left exactly as it is.
+  const current = await deps.messageBlocks(edit.channel, edit.ts);
+  if (!current || !cardIsOpen(current)) {
+    console.warn(`[lapseNudges] edit not applied for teacher ${edit.d.t}: ${current ? 'the card was already dealt with' : 'the card could not be read'}`);
+    if (payload?.user?.id) {
+      await deps.tellUser(edit.channel, payload.user.id, current
+        ? `:information_source: Your edit was not saved: the check-in for ${edit.d.name} was already dealt with while you were editing. The card was left as it is.`
+        : `:warning: Your edit to the check-in for ${edit.d.name} was not saved: the card could not be read to make sure it is still open. Try Edit again in a minute.`);
+    }
+    return;
+  }
   const who = payload?.user?.id ? `<@${payload.user.id}>` : 'a teammate';
   await deps.updateMessage(edit.channel, edit.ts, `Check-in for ${edit.d.name} at ${edit.d.school} (edited)`, cardBlocks(edit.d, edit.email, { mode, sender: senderLabel(), leadUrl: closeLeadUrl(edit.d.lead), note: `:pencil2: Edited by ${who}` }));
 }

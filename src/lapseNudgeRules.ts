@@ -81,6 +81,7 @@ export interface NudgeTeacher {
   ncesSchoolId: string; // as the feed sent it
   districtKey: string;
   schoolName: string;
+  state: string; // two-letter code when the feed gives a usable one, else ''
   sessionsYear: number;
   firstSessionDate: string;
   lastSessionDate: string;
@@ -118,10 +119,49 @@ export function parseTeacher(raw: unknown): NudgeTeacher | null {
     teacherId, firstName: text(r.first_name), lastName: text(r.last_name),
     email: EMAIL_RE.test(email) ? email : '',
     schoolKey: normNces(r.nces_school_id), ncesSchoolId: text(r.nces_school_id), districtKey: normNces(r.nces_district_id),
-    schoolName: text(r.school_name), sessionsYear: count(r.sessions_year),
+    schoolName: text(r.school_name), state: stateCode(r.state), sessionsYear: count(r.sessions_year),
     firstSessionDate: day(r.first_session_date), lastSessionDate: day(r.last_session_date),
     classes, optedOut: r.opted_out === true || r.opted_out === 'true', nudges,
   };
+}
+
+// ---- where the teacher is (for the hours an email may go out) ----
+
+// State FIPS codes: the first two digits of a 12-digit NCES school ID.
+const FIPS_STATE: Record<string, string> = {
+  '01': 'AL', '02': 'AK', '04': 'AZ', '05': 'AR', '06': 'CA', '08': 'CO', '09': 'CT', '10': 'DE', '11': 'DC', '12': 'FL', '13': 'GA', '15': 'HI', '16': 'ID',
+  '17': 'IL', '18': 'IN', '19': 'IA', '20': 'KS', '21': 'KY', '22': 'LA', '23': 'ME', '24': 'MD', '25': 'MA', '26': 'MI', '27': 'MN', '28': 'MS', '29': 'MO',
+  '30': 'MT', '31': 'NE', '32': 'NV', '33': 'NH', '34': 'NJ', '35': 'NM', '36': 'NY', '37': 'NC', '38': 'ND', '39': 'OH', '40': 'OK', '41': 'OR', '42': 'PA',
+  '44': 'RI', '45': 'SC', '46': 'SD', '47': 'TN', '48': 'TX', '49': 'UT', '50': 'VT', '51': 'VA', '53': 'WA', '54': 'WV', '55': 'WI', '56': 'WY',
+};
+const STATE_CODES: readonly string[] = Object.values(FIPS_STATE);
+
+// A two-letter state code we know, or ''.
+export function stateCode(v: unknown): string {
+  const code = text(v).toUpperCase();
+  return STATE_CODES.includes(code) ? code : '';
+}
+
+// The state a public school's 12-digit NCES ID starts with, or '' (private schools' IDs are
+// shorter and carry no state).
+export function stateFromNces(ncesSchoolId: unknown): string {
+  const id = text(ncesSchoolId);
+  return /^\d{12}$/.test(id) ? FIPS_STATE[id.slice(0, 2)] ?? '' : '';
+}
+
+export const SEND_FROM_HOUR = 7;
+export const SEND_UNTIL_HOUR = 18;
+
+// Null when an email may go out now, else what time it is for the teacher ("9:40pm",
+// "Saturday 10:15am"). Weekdays 7am to 6pm in `timeZone`.
+export function outsideSendHours(now: Date, timeZone: string): string | null {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'long', hour: 'numeric', minute: '2-digit', hourCycle: 'h23' }).formatToParts(now);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
+  const hour = Number(get('hour')) % 24;
+  const weekend = ['Saturday', 'Sunday'].includes(get('weekday'));
+  if (!weekend && hour >= SEND_FROM_HOUR && hour < SEND_UNTIL_HOUR) return null;
+  const clock = `${hour % 12 || 12}:${get('minute')}${hour < 12 ? 'am' : 'pm'}`;
+  return weekend ? `${get('weekday')} ${clock}` : clock;
 }
 
 // ---- who gets a card ----
@@ -288,6 +328,7 @@ export interface CardData {
   school: string;
   n: number; // sessions this year
   days: number; // days since the last session, when the card was made
+  st?: string; // the teacher's state, when the feed gave one
 }
 
 export function cardData(t: NudgeTeacher, kind: NudgeKind, leadId: string, today: string): CardData {
@@ -295,6 +336,7 @@ export function cardData(t: NudgeTeacher, kind: NudgeKind, leadId: string, today
     t: t.teacherId, s: t.ncesSchoolId, k: kind, l: t.lastSessionDate, lead: leadId, to: t.email,
     name: ([t.firstName, t.lastName].filter(Boolean).join(' ') || '(no name)').slice(0, 80),
     school: (t.schoolName || '(no school name)').slice(0, 80), n: t.sessionsYear, days: daysBetween(t.lastSessionDate, today),
+    ...(t.state ? { st: t.state } : {}),
   };
 }
 
@@ -302,7 +344,7 @@ export function parseCardData(value: unknown): CardData | null {
   try {
     const d = JSON.parse(String(value));
     const ok = d && typeof d === 'object' && text(d.t) && KINDS.includes(d.k) && isDate(d.l) && text(d.lead) && EMAIL_RE.test(String(d.to));
-    return ok ? { t: String(d.t), s: text(d.s), k: d.k, l: d.l.slice(0, 10), lead: String(d.lead), to: String(d.to).toLowerCase(), name: text(d.name), school: text(d.school), n: count(d.n), days: count(d.days) } : null;
+    return ok ? { t: String(d.t), s: text(d.s), k: d.k, l: d.l.slice(0, 10), lead: String(d.lead), to: String(d.to).toLowerCase(), name: text(d.name), school: text(d.school), n: count(d.n), days: count(d.days), ...(stateCode(d.st) ? { st: stateCode(d.st) } : {}) } : null;
   } catch {
     return null;
   }
@@ -410,10 +452,10 @@ export function readEditModal(view: any): { channel: string; ts: string; d: Card
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 // Null when the run made no cards and held nobody out: a quiet run says nothing.
-export function summaryLine(r: { mode: NudgeMode; cards: number; heldOut: number; waiting: number }): string | null {
+export function summaryLine(r: { mode: NudgeMode; cards: number; heldOut: number; waiting: number; senderName?: string }): string | null {
   if (!r.cards && !r.heldOut) return null;
   const parts: string[] = [];
-  if (r.cards) parts.push(r.mode === 'preview' ? `${plural(r.cards, 'check-in preview', 'check-in previews')} posted (sending is switched off)` : `${plural(r.cards, 'check-in draft', 'check-in drafts')} posted`);
+  if (r.cards) parts.push(r.mode === 'preview' ? `${plural(r.cards, 'check-in preview', 'check-in previews')} posted (sending is switched off)` : `${plural(r.cards, 'check-in draft', 'check-in drafts')} posted${r.mode === 'draft' ? ` (approving saves a draft for ${r.senderName || 'Katie'} in Close)` : ''}`);
   if (r.heldOut) parts.push(`${r.heldOut} held out for the comparison group`);
   if (r.waiting) parts.push(`${r.waiting} waiting: recent contact or weekly school limit`);
   return `:wave: ${parts.join(', ')}`;

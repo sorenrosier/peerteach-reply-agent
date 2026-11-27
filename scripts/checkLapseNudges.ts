@@ -15,6 +15,7 @@ import {
   isHeldOut,
   lastBefore,
   noRunReason,
+  outsideSendHours,
   parseCardData,
   parseMode,
   parseTeacher,
@@ -24,12 +25,13 @@ import {
   schoolCardsThisWeek,
   semesterStart,
   stableHash,
+  stateFromNces,
   summaryLine,
   verdict,
   whenPhrase,
 } from '../src/lapseNudgeRules';
 import { LapseNudgeDeps, NudgeRecord, runLapseNudges } from '../src/lapseNudges';
-import { NudgeActionDeps, applyLapseNudgeEdit, handleLapseNudgeAction, isLapseNudgeAction, isLapseNudgeModal, lapseNudgeEditErrors } from '../src/lapseNudgeActions';
+import { NudgeActionDeps, applyLapseNudgeEdit, handleLapseNudgeAction, isLapseNudgeAction, isLapseNudgeModal, lapseNudgeEditErrors, teacherTimeZone } from '../src/lapseNudgeActions';
 import { salesOpsBase } from '../src/usageHealth';
 import { addressesIn } from '../src/closeCrm';
 import type { CloseEmailRow, CloseLeadRow } from '../src/closeCrm';
@@ -50,6 +52,7 @@ function check(label: string, fn: () => void | Promise<void>): Promise<void> {
 
 const WED = new Date('2026-12-09T16:00:00Z'); // 8am Pacific, the second week after Thanksgiving
 const TODAY = '2026-12-09';
+const NOON = new Date('2026-12-09T18:00:00Z'); // Wednesday 10am Pacific, 1pm Eastern: fine for any US teacher
 const DASH = /[‒-―−]/;
 
 // ---- the feed ----
@@ -113,9 +116,9 @@ const EMAIL = { subject: SUBJECT, body: "Hi Melissa,\n\nIt's been quiet & I wond
 const CARD_TS = '1796832000.000100'; // 2026-12-09T16:00:00Z
 const liveCard = (mode: NudgeMode = 'live') => cardBlocks(CARD, EMAIL, { mode, sender: 'Katie (katie@peerteach.org)', leadUrl: 'https://app.close.com/lead/lead_bollinger/' });
 
-interface ClickFake { deps: NudgeActionDeps; rows: NudgeRecord[]; created: any[]; cardUpdates: Array<{ text: string; blocks: any[] }>; told: string[]; modals: any[]; messageUpdates: any[]; notes: string[]; emailChecks: Array<{ leadId: string; since: string }> }
+interface ClickFake { deps: NudgeActionDeps; rows: NudgeRecord[]; created: any[]; cardUpdates: Array<{ text: string; blocks: any[] }>; told: string[]; modals: any[]; messageUpdates: any[]; notes: string[]; emailChecks: Array<{ leadId: string; since: string }>; current: any[] | null; toldUsers: Array<{ channel: string; user: string; text: string }> }
 function clickFake(over: Partial<NudgeActionDeps> = {}, leadEmails: CloseEmailRow[] = []): ClickFake {
-  const f: ClickFake = { rows: [], created: [], cardUpdates: [], told: [], modals: [], messageUpdates: [], notes: [], emailChecks: [], deps: null as any };
+  const f: ClickFake = { rows: [], created: [], cardUpdates: [], told: [], modals: [], messageUpdates: [], notes: [], emailChecks: [], current: liveCard(), toldUsers: [], deps: null as any };
   f.deps = {
     recordNudge: async (r) => { f.rows.push(r); },
     leadEmailsSince: async (leadId, since) => { f.emailChecks.push({ leadId, since }); return leadEmails; },
@@ -125,6 +128,8 @@ function clickFake(over: Partial<NudgeActionDeps> = {}, leadEmails: CloseEmailRo
     tellClicker: async (_url, text) => { f.told.push(text); },
     openModal: async (triggerId, view) => { f.modals.push({ triggerId, view }); },
     updateMessage: async (channel, ts, text, blocks) => { f.messageUpdates.push({ channel, ts, text, blocks }); },
+    messageBlocks: async () => f.current, // the card as Slack holds it now
+    tellUser: async (channel, user, text) => { f.toldUsers.push({ channel, user, text }); },
     postNote: async (text) => { f.notes.push(text); },
     ...over,
   };
@@ -584,19 +589,19 @@ async function main() {
     for (const blocks of [liveCard('preview'), liveCard('live')]) {
       const f = clickFake();
       const c = click(ACTION.approve, blocks);
-      await handleLapseNudgeAction(c.action, c.payload, f.deps, 'preview');
+      await handleLapseNudgeAction(c.action, c.payload, f.deps, 'preview', NOON);
       assert.deepStrictEqual([f.created.length, f.rows.length, f.cardUpdates.length, f.emailChecks.length], [0, 0, 0, 0]);
       assert.ok(f.told[0].includes('Preview only: sending is switched off'));
     }
     const f = clickFake();
     const c = click(ACTION.edit, liveCard('preview'));
-    await handleLapseNudgeAction(c.action, c.payload, f.deps, 'preview');
+    await handleLapseNudgeAction(c.action, c.payload, f.deps, 'preview', NOON);
     assert.deepStrictEqual([f.modals.length, f.created.length], [0, 0]);
   });
   await check('click, live: Approve creates the Close email in the outbox from Katie, records sent, and the card says who', async () => {
     const f = clickFake();
     const c = click(ACTION.approve);
-    await handleLapseNudgeAction(c.action, c.payload, f.deps, 'live');
+    await handleLapseNudgeAction(c.action, c.payload, f.deps, 'live', NOON);
     assert.deepStrictEqual(f.created, [{ leadId: 'lead_bollinger', to: 'mwright@srvusd.net', subject: SUBJECT, bodyText: EMAIL.body, status: 'outbox', user: KATIE }]);
     assert.deepStrictEqual(f.rows, [{ teacher_id: '100', nces_school_id: '063513007356', kind: 'first', action: 'sent', lapse_started_on: '2026-10-28', slack_ts: CARD_TS, actor: 'soren' }]);
     assert.deepStrictEqual(f.emailChecks, [{ leadId: 'lead_bollinger', since: '2026-12-09T16:00:00.000Z' }]);
@@ -607,7 +612,7 @@ async function main() {
   await check('click, draft: Approve creates a Close draft, recorded as sent with the note "close draft"', async () => {
     const f = clickFake();
     const c = click(ACTION.approve, liveCard('draft'));
-    await handleLapseNudgeAction(c.action, c.payload, f.deps, 'draft');
+    await handleLapseNudgeAction(c.action, c.payload, f.deps, 'draft', NOON);
     assert.deepStrictEqual(f.created.map((p) => [p.status, p.leadId, p.to, p.user.id]), [['draft', 'lead_bollinger', 'mwright@srvusd.net', 'user_katie']]);
     assert.deepStrictEqual(f.rows.map((x) => [x.action, x.note, x.actor]), [['sent', 'close draft', 'soren']]);
     const done = allText(lastCard(f).blocks);
@@ -617,7 +622,7 @@ async function main() {
     for (const over of [{ createEmail: async () => { throw new Error('400 sender is not a connected account'); } }, { findSender: async () => null }] as Array<Partial<NudgeActionDeps>>) {
       const f = clickFake(over);
       const c = click(ACTION.approve);
-      await handleLapseNudgeAction(c.action, c.payload, f.deps, 'live');
+      await handleLapseNudgeAction(c.action, c.payload, f.deps, 'live', NOON);
       assert.deepStrictEqual(f.rows.map((x) => x.action), ['failed']);
       assert.ok(f.rows[0].note);
       const card = lastCard(f);
@@ -630,12 +635,12 @@ async function main() {
   await check('click: a second click on a card already dealt with does nothing', async () => {
     const first = clickFake();
     const c1 = click(ACTION.approve);
-    await handleLapseNudgeAction(c1.action, c1.payload, first.deps, 'live');
+    await handleLapseNudgeAction(c1.action, c1.payload, first.deps, 'live', NOON);
     // Slack now shows the "Sent" card; a window still showing the old buttons clicks each of them.
     for (const id of Object.values(ACTION)) {
       const f = clickFake();
       const c = click(id, lastCard(first).blocks);
-      await handleLapseNudgeAction(c.action, c.payload, f.deps, 'live');
+      await handleLapseNudgeAction(c.action, c.payload, f.deps, 'live', NOON);
       assert.deepStrictEqual([f.created.length, f.rows.length, f.cardUpdates.length, f.modals.length], [0, 0, 0, 0], id);
       assert.ok(f.told[0].includes('already dealt with'));
     }
@@ -643,12 +648,12 @@ async function main() {
   await check('click: even with the buttons still showing, Approve sends nothing if Close already has an email with the teacher since the card', async () => {
     const f = clickFake({}, [{ direction: 'outgoing', date: '2026-12-09T16:05:00Z', from: 'katie@peerteach.org', to: ['mwright@srvusd.net'] }]);
     const c = click(ACTION.approve);
-    await handleLapseNudgeAction(c.action, c.payload, f.deps, 'live');
+    await handleLapseNudgeAction(c.action, c.payload, f.deps, 'live', NOON);
     assert.deepStrictEqual([f.created.length, f.rows.length, f.cardUpdates.length], [0, 0, 0]);
     assert.ok(f.told[0].includes('Nothing was sent'));
     // If Close can't be asked, nothing is sent either.
     const g = clickFake({ leadEmailsSince: async () => { throw new Error('timeout'); } });
-    await handleLapseNudgeAction(c.action, c.payload, g.deps, 'live');
+    await handleLapseNudgeAction(c.action, c.payload, g.deps, 'live', NOON);
     assert.deepStrictEqual([g.created.length, g.rows.length], [0, 0]);
   });
   await check('click: two Approve clicks at the same moment create one email', async () => {
@@ -658,8 +663,8 @@ async function main() {
     const slow = f.deps.createEmail;
     f.deps.createEmail = async (p) => { await gate; return slow(p); };
     const c = click(ACTION.approve);
-    const a = handleLapseNudgeAction(c.action, c.payload, f.deps, 'live');
-    const b = handleLapseNudgeAction(c.action, c.payload, f.deps, 'live');
+    const a = handleLapseNudgeAction(c.action, c.payload, f.deps, 'live', NOON);
+    const b = handleLapseNudgeAction(c.action, c.payload, f.deps, 'live', NOON);
     await b;
     release();
     await a;
@@ -668,7 +673,7 @@ async function main() {
   await check('click: sent but the log is down: the card still says sent, with a warning, and the main channel is told', async () => {
     const f = clickFake({ recordNudge: async () => { throw new Error('503'); } });
     const c = click(ACTION.approve);
-    await handleLapseNudgeAction(c.action, c.payload, f.deps, 'live');
+    await handleLapseNudgeAction(c.action, c.payload, f.deps, 'live', NOON);
     assert.strictEqual(f.created.length, 1);
     assert.ok(allText(lastCard(f).blocks).includes('*Sent* by <@U1>') && allText(lastCard(f).blocks).includes('could not be recorded'));
     assert.strictEqual(f.notes.length, 1);
@@ -678,7 +683,7 @@ async function main() {
       for (const mode of ['preview', 'live'] as const) {
         const f = clickFake();
         const c = click(id, liveCard(mode));
-        await handleLapseNudgeAction(c.action, c.payload, f.deps, mode);
+        await handleLapseNudgeAction(c.action, c.payload, f.deps, mode, NOON);
         assert.deepStrictEqual(f.rows, [{ teacher_id: '100', nces_school_id: '063513007356', kind: 'first', action, lapse_started_on: '2026-10-28', slack_ts: CARD_TS, actor: 'soren' }]);
         assert.ok(allText(lastCard(f).blocks).includes(words) && !cardIsOpen(lastCard(f).blocks));
         assert.deepStrictEqual([f.created.length, f.emailChecks.length], [0, 0]);
@@ -687,13 +692,13 @@ async function main() {
     // The log is down: the card is left as it was, so the click can be repeated.
     const f = clickFake({ recordNudge: async () => { throw new Error('503'); } });
     const c = click(ACTION.skip);
-    await handleLapseNudgeAction(c.action, c.payload, f.deps, 'live');
+    await handleLapseNudgeAction(c.action, c.payload, f.deps, 'live', NOON);
     assert.deepStrictEqual([f.cardUpdates.length, f.told.length], [0, 1]);
   });
   await check('click: Edit opens a window with the email; saving puts the new text on the card, and Approve then sends exactly that', async () => {
     const f = clickFake();
     const c = click(ACTION.edit);
-    await handleLapseNudgeAction(c.action, c.payload, f.deps, 'live');
+    await handleLapseNudgeAction(c.action, c.payload, f.deps, 'live', NOON);
     assert.deepStrictEqual([f.modals.length, f.rows.length, f.created.length], [1, 0, 0]);
     const view = f.modals[0].view;
     assert.strictEqual(f.modals[0].triggerId, 'trig_1');
@@ -713,8 +718,129 @@ async function main() {
     assert.deepStrictEqual([f.rows.length, f.created.length], [0, 0]); // saving an edit sends nothing
 
     const c2 = click(ACTION.approve, card);
-    await handleLapseNudgeAction(c2.action, c2.payload, f.deps, 'live');
+    await handleLapseNudgeAction(c2.action, c2.payload, f.deps, 'live', NOON);
     assert.deepStrictEqual(f.created.map((p) => [p.subject, p.bodyText, p.status]), [['A quick hello', 'Hi Melissa,\n\nShorter.\n\nKatie', 'outbox']]);
+  });
+
+  // ---- an edit never re-opens a card someone already dealt with ----
+  const editSubmit = (view: any, body: string) => ({ type: 'view_submission', user: { id: 'U2', name: 'katie' }, view: { callback_id: view.callback_id, private_metadata: view.private_metadata, state: { values: { subject: { value: { value: SUBJECT } }, body: { value: { value: body } } } } } });
+  await check('click: Edit on a card already sent, saved as a draft, skipped or set to never opens nothing and only tells the clicker', async () => {
+    const handled = [
+      doneBlocks(':white_check_mark: *Sent* by <@U1>', CARD, EMAIL),
+      doneBlocks(':memo: *Saved as a draft for Katie* by <@U1>', CARD, EMAIL),
+      doneBlocks(':next_track_button: *Skipped* by <@U1>', CARD),
+      doneBlocks(':no_entry_sign: *Never nudge this teacher*, set by <@U1>', CARD),
+    ];
+    for (const blocks of handled) {
+      const f = clickFake();
+      const c = click(ACTION.edit, blocks);
+      await handleLapseNudgeAction(c.action, c.payload, f.deps, 'live', NOON);
+      assert.deepStrictEqual([f.modals.length, f.cardUpdates.length, f.messageUpdates.length, f.rows.length, f.created.length, f.told.length], [0, 0, 0, 0, 0, 1]);
+      assert.ok(f.told[0].includes('already dealt with'));
+    }
+  });
+  await check('edit saved after the card was dealt with (approved while the window was open): the card is left exactly as it is and the editor is told privately', async () => {
+    const f = clickFake();
+    const c = click(ACTION.edit);
+    await handleLapseNudgeAction(c.action, c.payload, f.deps, 'live', NOON);
+    const view = f.modals[0].view; // opened while the card was still open
+    for (const now of [doneBlocks(':white_check_mark: *Sent* by <@U1>', CARD, EMAIL), doneBlocks(':next_track_button: *Skipped* by <@U1>', CARD), doneBlocks(':hourglass_flowing_sand: Sending… (approved by <@U1>)', CARD, EMAIL)]) {
+      f.current = now; // what the card holds when the edit arrives
+      f.toldUsers.length = 0;
+      await applyLapseNudgeEdit(editSubmit(view, 'Hi Melissa,\n\nA late edit.\n\nKatie'), f.deps, 'live');
+      assert.deepStrictEqual([f.messageUpdates.length, f.cardUpdates.length, f.rows.length, f.created.length], [0, 0, 0, 0]);
+      assert.deepStrictEqual(f.toldUsers.map((t) => [t.channel, t.user]), [['C_HEALTH', 'U2']]);
+      assert.ok(f.toldUsers[0].text.includes('not saved') && f.toldUsers[0].text.includes('already dealt with'));
+    }
+    // If the card can't be read, it isn't touched either.
+    f.current = null;
+    f.toldUsers.length = 0;
+    await applyLapseNudgeEdit(editSubmit(view, 'Hi'), f.deps, 'live');
+    assert.deepStrictEqual([f.messageUpdates.length, f.toldUsers.length], [0, 1]);
+    assert.ok(f.toldUsers[0].text.includes('could not be read'));
+    // Still open: the edit goes on the card.
+    f.current = liveCard();
+    await applyLapseNudgeEdit(editSubmit(view, 'Hi Melissa,\n\nIn time.\n\nKatie'), f.deps, 'live');
+    assert.strictEqual(f.messageUpdates.length, 1);
+  });
+
+  // ---- Approve only during the teacher's working day ----
+  await check('time zone: state FIPS from the 12-digit NCES ID (06 CA, 48 TX, 36 NY, 27 MN), unknown and private IDs fall back to Pacific', () => {
+    assert.deepStrictEqual(['063513007356', '482364002481', '360007702877', '270042000123'].map(stateFromNces), ['CA', 'TX', 'NY', 'MN']);
+    for (const id of ['000001160686', '01160686', '421641', '990000000000', '', null, '63513007356']) assert.strictEqual(stateFromNces(id), '', String(id));
+    assert.deepStrictEqual(['063513007356', '482364002481', '360007702877', '270042000123'].map((s) => teacherTimeZone({ s })), ['America/Los_Angeles', 'America/Chicago', 'America/New_York', 'America/Chicago']);
+    assert.strictEqual(teacherTimeZone({ s: '000001160686' }), 'America/Los_Angeles');
+    assert.strictEqual(teacherTimeZone({ s: '01160686' }), 'America/Los_Angeles');
+    // The feed's state wins when it gives one; a state we don't know is ignored.
+    assert.strictEqual(teacherTimeZone({ s: '063513007356', st: 'NY' }), 'America/New_York');
+    assert.strictEqual(cardData(teacher({ state: 'ny' }), 'first', 'lead_x', TODAY).st, 'NY');
+    assert.strictEqual(cardData(teacher({ state: 'Narnia' }), 'first', 'lead_x', TODAY).st, undefined);
+    assert.strictEqual(parseCardData(JSON.stringify({ ...CARD, st: 'TX' }))!.st, 'TX');
+  });
+  await check('send hours: weekdays 7am to 6pm in the given zone', () => {
+    const la = (iso: string) => outsideSendHours(new Date(iso), 'America/Los_Angeles');
+    assert.strictEqual(la('2026-12-09T14:59:00Z'), '6:59am');
+    assert.strictEqual(la('2026-12-09T15:00:00Z'), null);
+    assert.strictEqual(la('2026-12-10T01:59:00Z'), null); // 5:59pm
+    assert.strictEqual(la('2026-12-10T02:00:00Z'), '6:00pm');
+    assert.strictEqual(la('2026-12-10T05:40:00Z'), '9:40pm');
+    assert.strictEqual(la('2026-12-10T08:05:00Z'), '12:05am');
+    assert.strictEqual(la('2026-12-12T18:15:00Z'), 'Saturday 10:15am');
+    assert.strictEqual(la('2026-12-13T20:00:00Z'), 'Sunday 12:00pm');
+    assert.strictEqual(outsideSendHours(new Date('2026-12-09T23:30:00Z'), 'America/New_York'), '6:30pm'); // 3:30pm Pacific
+  });
+  await check('click, live: Approve at night or on a weekend for the teacher sends nothing, tells the clicker, and leaves the card clickable', async () => {
+    for (const [iso, said] of [['2026-12-10T05:40:00Z', "It's 9:40pm for this teacher. Approve again on a weekday between 7am and 6pm their time."], ['2026-12-12T18:15:00Z', "It's Saturday 10:15am for this teacher. Approve again on a weekday between 7am and 6pm their time."]]) {
+      const f = clickFake();
+      const c = click(ACTION.approve);
+      await handleLapseNudgeAction(c.action, c.payload, f.deps, 'live', new Date(iso));
+      assert.deepStrictEqual([f.created.length, f.rows.length, f.cardUpdates.length, f.emailChecks.length], [0, 0, 0, 0]); // the card was never touched
+      assert.ok(f.told.length === 1 && f.told[0].includes(said), f.told[0]);
+    }
+    // 3:30pm in California is 6:30pm for a New York teacher (by NCES ID, or by the feed's state).
+    for (const card of [{ ...CARD, s: '360007702877' }, { ...CARD, st: 'NY' }]) {
+      const f = clickFake();
+      const value = JSON.stringify(card);
+      const c = click(ACTION.approve);
+      await handleLapseNudgeAction({ action_id: ACTION.approve, value }, c.payload, f.deps, 'live', new Date('2026-12-09T23:30:00Z'));
+      assert.strictEqual(f.created.length, 0);
+      assert.ok(f.told[0].includes("It's 6:30pm for this teacher"), f.told[0]);
+    }
+    // The same moment is fine for the California teacher, and Skip works at any hour.
+    const ok = clickFake();
+    const c = click(ACTION.approve);
+    await handleLapseNudgeAction(c.action, c.payload, ok.deps, 'live', new Date('2026-12-09T23:30:00Z'));
+    assert.strictEqual(ok.created.length, 1);
+    const skip = clickFake();
+    const s = click(ACTION.skip);
+    await handleLapseNudgeAction(s.action, s.payload, skip.deps, 'live', new Date('2026-12-10T05:40:00Z'));
+    assert.deepStrictEqual(skip.rows.map((x) => x.action), ['skipped']);
+  });
+  await check('click, draft: a draft is saved at any hour, and nothing on the card or in the summary says "sent"', async () => {
+    for (const iso of ['2026-12-10T05:40:00Z', '2026-12-12T18:15:00Z']) {
+      const f = clickFake();
+      const c = click(ACTION.approve, liveCard('draft'));
+      await handleLapseNudgeAction(c.action, c.payload, f.deps, 'draft', new Date(iso));
+      assert.deepStrictEqual(f.created.map((p) => p.status), ['draft']);
+      assert.deepStrictEqual(f.rows.map((x) => [x.action, x.note]), [['sent', 'close draft']]);
+      for (const u of f.cardUpdates) assert.ok(!/\bsent\b|sending/i.test(u.text + allText(u.blocks)), u.text + allText(u.blocks));
+      assert.ok(allText(lastCard(f).blocks).includes('Saved as a draft for Katie'));
+    }
+    // A failed draft doesn't talk about sending either.
+    const f = clickFake({ createEmail: async () => { throw new Error('400'); } });
+    const c = click(ACTION.approve, liveCard('draft'));
+    await handleLapseNudgeAction(c.action, c.payload, f.deps, 'draft', NOON);
+    assert.ok(allText(lastCard(f).blocks).includes('no draft was saved') && !/\bsent\b/i.test(allText(lastCard(f).blocks)));
+    assert.ok(!/\bsent\b/i.test(allText(liveCard('draft'))) && allText(liveCard('draft')).includes('Approve & save draft'));
+    const line = summaryLine({ mode: 'draft', senderName: 'Katie', cards: 2, heldOut: 0, waiting: 1 })!;
+    assert.strictEqual(line, ':wave: 2 check-in drafts posted (approving saves a draft for Katie in Close), 1 waiting: recent contact or weekly school limit');
+  });
+  await check('a Close draft (recorded as sent, note "close draft") counts like a sent email for the semester limit and the second check-in', () => {
+    const closeDraft = (kind: string, at: string, lapse?: string) => ({ ...nudge(kind, 'sent', at, lapse), note: 'close draft' });
+    assert.deepStrictEqual(rule({ first_session_date: '2026-08-10', nudges: [closeDraft('first', '2026-09-08T16:00:00Z', '2026-08-14'), closeDraft('second', '2026-09-30T16:00:00Z', '2026-08-14')] }), { skip: 'two already sent this semester' });
+    assert.deepStrictEqual(rule({ nudges: [closeDraft('first', '2026-11-10T17:30:00Z')] }), { kind: 'second', firstSentAt: '2026-11-10T17:30:00Z' });
+    assert.deepStrictEqual(rule({ nudges: [closeDraft('first', '2026-11-12T17:30:00Z')] }), { skip: 'second check-in not due yet' });
+    assert.deepStrictEqual(rule({ nudges: [closeDraft('first', '2026-10-30T16:00:00Z'), closeDraft('second', '2026-11-30T16:00:00Z')] }), { skip: 'two already sent this semester' });
   });
 
   // ---- shared with the health job ----
