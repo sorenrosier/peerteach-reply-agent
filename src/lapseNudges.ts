@@ -156,7 +156,7 @@ export async function runLapseNudges(opts: { dryRun?: boolean; now?: Date } = {}
   try {
     const t0 = Date.now();
     // A dry run may be asked for on any weekday; holidays and summer still stop it.
-    const notToday = noRunReason(today, { anyWeekday: dryRun });
+    const notToday = noRunReason(today, { anyWeekday: dryRun, runOn: envOptional('LAPSE_NUDGE_RUN_ON') });
     if (notToday) { result.notToday = notToday; return finish(); }
     const until = holdoutUntil();
     const cutoff = lastBefore(today);

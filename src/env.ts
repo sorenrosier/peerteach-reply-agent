@@ -49,6 +49,7 @@ const OPTIONAL_VARS = [
   // Check-in emails to teachers who stopped (src/lapseNudges.ts). Cards only, no Approve button,
   // unless LAPSE_NUDGE_MODE is 'draft' (Approve saves a Close draft) or 'live' (Approve sends).
   'LAPSE_NUDGE_MODE',
+  'LAPSE_NUDGE_RUN_ON',
   'NUDGE_SENDER_EMAIL',
   'NUDGE_SENDER_NAME',
   'NUDGE_CALENDAR_URL',

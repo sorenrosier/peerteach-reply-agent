@@ -51,8 +51,12 @@ export function lastBefore(today: string): string {
 // Why the job does nothing today, or null on a day it runs: only Tuesday to Thursday, never in a
 // holiday week or the week after one (teachers are digging out), never in the summer pause.
 // `today` is the Pacific date.
-export function noRunReason(today: string, opts: { anyWeekday?: boolean } = {}): string | null {
+// `runOn`: a date (LAPSE_NUDGE_RUN_ON) on which a run started by hand ignores the weekday and
+// holiday rules, so cards can be posted outside the schedule. It only matches that one day,
+// so a forgotten setting does nothing afterwards. Summer still wins.
+export function noRunReason(today: string, opts: { anyWeekday?: boolean; runOn?: string | null } = {}): string | null {
   if (isSummerPause(today)) return 'summer pause';
+  if (opts.runOn && opts.runOn.trim() === today) return null;
   if (inHolidayWeek(today)) return 'holiday week';
   if (inHolidayWeek(addDays(today, -7))) return 'first week after a holiday week';
   const dow = new Date(`${today}T00:00:00Z`).getUTCDay();
