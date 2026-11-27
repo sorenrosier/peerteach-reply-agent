@@ -44,6 +44,15 @@ const OPTIONAL_VARS = [
   'PEERTEACH_USAGE_SECRET',
   'HEALTH_EXCLUDED_TEACHER_IDS',
   'USAGE_HEALTH_SLACK_CHANNEL',
+  // The Sales Ops app's address, when it isn't the default (the health feed and the check-in job).
+  'SALES_OPS_BASE_URL',
+  // Check-in emails to teachers who stopped (src/lapseNudges.ts). Cards only, no Approve button,
+  // unless LAPSE_NUDGE_MODE is 'draft' (Approve saves a Close draft) or 'live' (Approve sends).
+  'LAPSE_NUDGE_MODE',
+  'NUDGE_SENDER_EMAIL',
+  'NUDGE_SENDER_NAME',
+  'NUDGE_CALENDAR_URL',
+  'NUDGE_HOLDOUT_UNTIL',
   'PEERTEACH_ADMIN_TOKEN',
   'PEERTEACH_API_URL',
 ] as const;

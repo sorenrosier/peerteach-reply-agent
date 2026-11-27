@@ -700,6 +700,44 @@ export async function postInfoNote(text: string, channel?: string): Promise<void
   await postMessage([{ type: 'section', text: { type: 'mrkdwn', text } }], text.slice(0, 150), channel);
 }
 
+// A card built by its own module (blocks and all), e.g. the check-in cards of src/lapseNudges.ts.
+// Returns the message's timestamp, or undefined when it could not be posted with the bot token.
+export async function postBlocks(blocks: any[], fallbackText: string, channel?: string): Promise<string | undefined> {
+  return postMessage(blocks, fallbackText, channel);
+}
+
+// Opens a modal for whoever just clicked. The trigger_id of a click is only good for 3 seconds.
+export async function openModal(triggerId: string, view: any): Promise<void> {
+  await client().views.open({ trigger_id: triggerId, view });
+}
+
+// Replaces a message the bot posted (for when there is no response_url, as after a modal).
+export async function updateMessage(channel: string, ts: string, text: string, blocks: any[]): Promise<void> {
+  await client().chat.update({ channel, ts, text, blocks });
+}
+
+// The blocks a message holds right now, or null when it can't be read (the bot needs the
+// channel's history scope: channels:history, or groups:history for a private channel).
+export async function fetchMessageBlocks(channel: string, ts: string): Promise<any[] | null> {
+  try {
+    const res = await client().conversations.history({ channel, latest: ts, oldest: ts, inclusive: true, limit: 1 });
+    const msg = (res.messages ?? []).find((m: any) => m.ts === ts);
+    return msg ? ((msg as any).blocks ?? []) : null;
+  } catch (err) {
+    console.error('[slack] conversations.history failed:', err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
+
+// A note only one person sees, in a channel (for when there is no response_url).
+export async function postEphemeral(channel: string, user: string, text: string): Promise<void> {
+  try {
+    await client().chat.postEphemeral({ channel, user, text });
+  } catch (err) {
+    console.error('[slack] postEphemeral failed:', err instanceof Error ? err.message : String(err));
+  }
+}
+
 // A private note to whoever clicked, leaving the card itself untouched (used when a click is
 // ignored, so a stale click can't overwrite the "Reply sent" record).
 export async function notifyClickerViaResponseUrl(responseUrl: string, text: string): Promise<void> {

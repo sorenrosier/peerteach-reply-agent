@@ -326,12 +326,33 @@ A nightly job (`GET /api/sync-usage-health`, Vercel Cron at 12:30 UTC) reads per
 - **Quiet times**: holiday weeks (Thanksgiving, Dec 25, Jan 1) don't count towards a stale feed, and from June 15 to August 20 the job does nothing, so spring's labels stay on the leads.
 - **Where it posts**: summaries, unmatched schools and the Monday list go to `USAGE_HEALTH_SLACK_CHANNEL` if set (invite the bot to it); errors and stale-feed warnings always go to the main channel. If the bot can't post to the health channel, the message goes to the main one.
 - **Slack** (live): errors, stale-feed warnings, schools with 5+ recent sessions and no Close lead, and on Mondays (Pacific) the schools whose label got worse over the past week.
-- **Env**: `CLOSE_API_KEY`, `PEERTEACH_USAGE_SECRET`, `USAGE_HEALTH_MODE`, and optionally `SALES_OPS_HEALTH_URL` and `HEALTH_EXCLUDED_TEACHER_IDS` (comma-separated teacher IDs to leave out; `peerteach.org` and `leanlabeducation.org` emails are always left out).
+- **Env**: `CLOSE_API_KEY`, `PEERTEACH_USAGE_SECRET`, `USAGE_HEALTH_MODE`, and optionally `SALES_OPS_HEALTH_URL` (or `SALES_OPS_BASE_URL` for the app's address alone) and `HEALTH_EXCLUDED_TEACHER_IDS` (comma-separated teacher IDs to leave out; `peerteach.org` and `leanlabeducation.org` emails are always left out).
 
 Check the rules offline (no API calls):
 
 ```bash
 npx ts-node scripts/checkUsageHealth.ts
+```
+
+## Check-in emails to teachers who stopped
+
+On Tuesday, Wednesday and Thursday mornings (`GET /api/send-lapse-nudges`, Vercel Cron at 16:00 UTC) a job asks the Sales Ops app which teachers built the habit and then stopped, and posts one Slack card per teacher with a short check-in email from Katie. A person clicks **Approve & send**, **Edit**, **Skip** or **Never nudge this teacher**. Nothing is ever sent without a click. Code: `src/lapseNudges.ts` (the job), `src/lapseNudgeActions.ts` (the button clicks) and `src/lapseNudgeRules.ts` (the rules, the two email templates and the cards, no I/O).
+
+- **Lapsed**: 3+ sessions this school year and none in the last 21 days, stretched by 7 days for each holiday week those days touch (the same holiday weeks as the usage health job).
+- **Never nudged**: opted-out teachers, `peerteach.org` / `leanlabeducation.org` emails and `HEALTH_EXCLUDED_TEACHER_IDS`, a missing or broken email, a school with no Close lead (matched by `School NCES` like the health job), and a school with no active opportunity on its lead or its district's lead.
+- **Not annoying**: a first email, and a second one 21 days later only if the teacher hasn't replied; never more than 2 sent per teacher per semester; at most 2 new cards per school per week (longest lapsed first); a teacher someone has emailed, or who has emailed us, in the last 14 days waits; a skipped card is not drafted again for that lapse; an unanswered card is not re-posted for 14 days.
+- **Quiet times**: only Tuesday to Thursday (Pacific), never in a holiday week or the week after one, never from June 15 to August 20, and not at all when the usage feed is stale (one warning in the main channel).
+- **Modes** (`LAPSE_NUDGE_MODE`): unset or `preview` posts cards with no Approve button (nothing can be sent); `draft` makes Approve save a draft in Katie's Close mailbox for her to send; `live` makes Approve send through Close. `?dry_run=1` works out who would get a card and logs it, on any weekday, posting and recording nothing.
+- **Memory**: the nudge log in the Sales Ops app (`previewed`, `drafted`, `sent`, `skipped`, `held_out`, `opted_out`, `failed` rows) is the only state. `drafted` means a card is waiting for a click; a Close draft is recorded as `sent` with the note `close draft`.
+- **Holdout**: up to and on `NUDGE_HOLDOUT_UNTIL`, teachers whose ID hashes odd get no card and one `held_out` row per lapse, so there is a comparison group.
+- **Close**: read-only, except the email created when a person approves (`POST activity/email/` from the Close user whose email is `NUDGE_SENDER_EMAIL`). If Close refuses, the card says so and stays clickable. In `live` mode Approve only sends on a weekday between 7am and 6pm in the teacher's time zone (from their state, else the state their NCES school ID starts with, else Pacific); outside that the clicker is told and the card stays as it is. An edit saved after a card was dealt with is not applied (the bot reads the card first, which needs the channel's history scope). Before creating the email, Close is asked whether one to or from the teacher has appeared on the lead since the card was posted, so a second click sends nothing.
+- **Where it posts**: cards and the one-line summary go to `USAGE_HEALTH_SLACK_CHANNEL` (the main channel if unset or unreachable); errors and the stale-feed warning go to the main channel.
+- **Env**: `CLOSE_API_KEY`, `PEERTEACH_USAGE_SECRET`, `LAPSE_NUDGE_MODE`, and optionally `NUDGE_SENDER_EMAIL` (default `katie@peerteach.org`), `NUDGE_SENDER_NAME` (default `Katie`), `NUDGE_CALENDAR_URL` (adds "or hop on a quick call" to the first email), `NUDGE_HOLDOUT_UNTIL` (YYYY-MM-DD) and `SALES_OPS_BASE_URL`.
+
+Check the rules, whole runs and button clicks offline (no API calls):
+
+```bash
+npx ts-node scripts/checkLapseNudges.ts
 ```
 
 ---

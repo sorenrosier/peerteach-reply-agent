@@ -141,6 +141,73 @@ export async function createOpportunity(body: Record<string, any>): Promise<stri
   return res.data.id;
 }
 
+// ---- for the check-in emails to teachers who stopped (src/lapseNudges.ts) ----
+
+// The lead IDs that have at least one active opportunity, in one paginated listing.
+export async function listActiveOpportunityLeadIds(): Promise<Set<string>> {
+  const out = new Set<string>();
+  let seen = 0;
+  for (let page = 0; page < 300; page++) {
+    const res = await close().get('opportunity/', { params: { status_type: 'active', _fields: 'lead_id', _limit: 100, _skip: seen } });
+    const rows: any[] = res.data.data ?? [];
+    seen += rows.length;
+    for (const o of rows) if (o?.lead_id) out.add(String(o.lead_id));
+    if (!res.data.has_more || !rows.length) return out;
+  }
+  throw new Error(`listActiveOpportunityLeadIds: more than ${seen} active opportunities`);
+}
+
+// An email activity on a lead, cut down to who and when. Addresses are lower-cased and bare.
+export interface CloseEmailRow { direction: 'incoming' | 'outgoing'; date: string; from: string; to: string[] }
+
+// Every address in a Close field, whatever its shape ("Name <a@b.org>", a list, an envelope).
+export function addressesIn(v: unknown): string[] {
+  return JSON.stringify(v ?? '').toLowerCase().match(/[a-z0-9._%+'-]+@[a-z0-9.-]+\.[a-z]{2,}/g) ?? [];
+}
+
+// Every email on a lead (sent, received, drafts) created after `sinceIso`.
+export async function listLeadEmailsSince(leadId: string, sinceIso: string): Promise<CloseEmailRow[]> {
+  const out: CloseEmailRow[] = [];
+  for (let page = 0; page < 20; page++) {
+    const res = await close().get('activity/email/', { params: { lead_id: leadId, date_created__gt: sinceIso, _fields: 'direction,to,cc,bcc,sender,envelope,date_created', _limit: 100, _skip: out.length } });
+    const rows: any[] = res.data.data ?? [];
+    for (const e of rows) {
+      const from = addressesIn(e.sender)[0] ?? addressesIn(e.envelope?.from)[0] ?? '';
+      out.push({ direction: e.direction === 'incoming' ? 'incoming' : 'outgoing', date: String(e.date_created ?? ''), from, to: [...addressesIn(e.to), ...addressesIn(e.cc), ...addressesIn(e.bcc)] });
+    }
+    if (!res.data.has_more || !rows.length) return out;
+  }
+  throw new Error(`listLeadEmailsSince: more than ${out.length} emails on ${leadId}`);
+}
+
+// The Close user with this email (the user list is read once per invocation), or null.
+export interface CloseUser { id: string; email: string; name: string }
+let userCache: CloseUser[] | null = null;
+export async function findUserByEmail(email: string): Promise<CloseUser | null> {
+  if (!userCache) {
+    const res = await close().get('user/', { params: { _limit: 100 } });
+    userCache = ((res.data.data ?? []) as any[]).map((u) => ({ id: String(u.id), email: String(u.email ?? '').toLowerCase(), name: [u.first_name, u.last_name].filter(Boolean).join(' ') }));
+  }
+  return userCache.find((u) => u.email === email.trim().toLowerCase()) ?? null;
+}
+
+// Creates an email on a lead from a user's connected mailbox. status 'draft' leaves it in that
+// user's drafts; 'outbox' hands it to Close to send. NOT yet checked against real Close: the
+// field names follow the public API docs (POST /activity/email/). Returns the activity's ID.
+export async function createLeadEmail(p: { leadId: string; to: string; subject: string; bodyText: string; status: 'draft' | 'outbox'; user: CloseUser }): Promise<string> {
+  const res = await close().post('activity/email/', {
+    lead_id: p.leadId,
+    user_id: p.user.id,
+    sender: p.user.name ? `${p.user.name} <${p.user.email}>` : p.user.email,
+    to: [p.to],
+    subject: p.subject,
+    body_text: p.bodyText,
+    status: p.status,
+  });
+  if (!res.data?.id) throw new Error(`Close returned no email activity: ${JSON.stringify(res.data ?? null).slice(0, 200)}`);
+  return String(res.data.id);
+}
+
 export function closeLeadUrl(leadId: string): string {
   return `https://app.close.com/lead/${leadId}/`;
 }

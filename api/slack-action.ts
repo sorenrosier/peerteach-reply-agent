@@ -10,6 +10,8 @@ import { renderLinks } from '../src/linkFormat';
 import { updateViaResponseUrl, notifyClickerViaResponseUrl } from '../src/slack';
 import { releaseDisplacedHolds, restoreDisplacedHolds, notifyDisplacedLeads } from '../src/displacement';
 import { SendReplyButtonValue, SlackActionPayload } from '../src/types';
+import { applyLapseNudgeEdit, handleLapseNudgeAction, isLapseNudgeAction, isLapseNudgeModal, lapseNudgeEditErrors } from '../src/lapseNudgeActions';
+import { ACTION as LAPSE_NUDGE_ACTION } from '../src/lapseNudgeRules';
 
 // A human decided what happens with this lead — clear any tentative calendar holds from
 // prior proposals regardless of the outcome (sent, edited elsewhere, or skipped). Fails
@@ -118,9 +120,42 @@ export default async function handler(
   }
 
   const payload = parsePayload(rawBody);
+
+  // The edit window of a check-in card (src/lapseNudgeActions.ts) was submitted. It has no
+  // `actions`, so it is handled before the check below. An empty 200 closes the window.
+  if (payload && isLapseNudgeModal(payload)) {
+    const errors = lapseNudgeEditErrors(payload);
+    if (errors) {
+      res.status(200).json({ response_action: 'errors', errors });
+      return;
+    }
+    waitUntil(applyLapseNudgeEdit(payload).catch((err) => {
+      console.error('[slack-action] check-in edit failed', err instanceof Error ? err.stack : String(err));
+    }));
+    res.status(200).end();
+    return;
+  }
+
   if (!payload || !Array.isArray(payload.actions) || payload.actions.length === 0) {
     console.warn('[slack-action] invalid payload', rawBody.slice(0, 200));
     res.status(400).json({ error: 'Invalid Slack payload' });
+    return;
+  }
+
+  // Buttons on a check-in card: their own handler, nothing shared with the reply cards below.
+  if (isLapseNudgeAction(payload.actions[0].action_id)) {
+    const action = payload.actions[0];
+    const work = handleLapseNudgeAction(action, payload).catch(async (err) => {
+      console.error('[slack-action] check-in action failed', err instanceof Error ? err.stack : String(err));
+      await notifyClickerViaResponseUrl(
+        payload.response_url,
+        `:warning: Something went wrong with that click (${err instanceof Error ? err.message : String(err)}). Check the card and Close before clicking again.`,
+      );
+    });
+    // Edit opens a window, and Slack only allows that within 3 seconds of the click: do it
+    // before answering. Everything else runs in the background like the reply cards.
+    if (action.action_id === LAPSE_NUDGE_ACTION.edit) await work; else waitUntil(work);
+    res.status(200).end();
     return;
   }
 
