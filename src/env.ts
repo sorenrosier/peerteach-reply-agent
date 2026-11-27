@@ -38,6 +38,11 @@ const OPTIONAL_VARS = [
   // Close CRM sync of booked calls (src/closeSync.ts). Writes only when CLOSE_SYNC_MODE=live.
   'CLOSE_API_KEY',
   'CLOSE_SYNC_MODE',
+  // Nightly usage health onto Close leads (src/usageHealth.ts). Writes only when USAGE_HEALTH_MODE=live.
+  'USAGE_HEALTH_MODE',
+  'SALES_OPS_HEALTH_URL',
+  'PEERTEACH_USAGE_SECRET',
+  'HEALTH_EXCLUDED_TEACHER_IDS',
   'PEERTEACH_ADMIN_TOKEN',
   'PEERTEACH_API_URL',
 ] as const;

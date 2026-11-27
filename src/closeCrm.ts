@@ -97,6 +97,31 @@ export async function findLeadByCustomField(fieldName: string, values: string[])
   return null;
 }
 
+// A lead as the paginated listing returns it: only what was asked for. `name` is the lead's own
+// name (blank on unnamed leads); `displayName` is what Close shows, which falls back to a contact.
+export interface CloseLeadRow {
+  id: string;
+  name: string;
+  displayName: string;
+  dateCreated: string;
+  custom: Record<string, any>; // custom field id -> value
+}
+
+// Every lead matching a Close search query, page by page, carrying only the listed custom
+// fields. For jobs that match many leads in memory instead of running one search per record.
+// Throws rather than return a partial list, so a caller never mistakes a cut-off for "no lead".
+export async function listLeads(query: string, customFieldIdList: string[]): Promise<CloseLeadRow[]> {
+  const _fields = ['id', 'name', 'display_name', 'date_created', ...customFieldIdList.map((id) => `custom.${id}`)].join(',');
+  const out: CloseLeadRow[] = [];
+  for (let page = 0; page < 300; page++) {
+    const res = await close().get('lead/', { params: { query, _fields, _limit: 100, _skip: out.length } });
+    const rows: any[] = res.data.data ?? [];
+    for (const d of rows) out.push({ id: d.id, name: d.name ?? '', displayName: d.display_name ?? '', dateCreated: d.date_created ?? '', custom: toLead(d).custom });
+    if (!res.data.has_more || !rows.length) return out;
+  }
+  throw new Error(`listLeads: more than ${out.length} leads match ${query}`);
+}
+
 export async function createLead(body: Record<string, any>): Promise<CloseLead> {
   const res = await close().post('lead/', body);
   return toLead(res.data);
