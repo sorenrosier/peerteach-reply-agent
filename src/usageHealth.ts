@@ -15,6 +15,7 @@ import {
   dryRunSummary,
   healthLabel,
   isFeedStale,
+  isSummerPause,
   parseExcludedIds,
   planHealth,
   recentWindow,
@@ -33,8 +34,9 @@ import {
 // NCES ID are read in one paginated listing and matched in memory. Nothing is ever created: a
 // school with no lead is reported. A lead is only written when one of its values changes.
 //
-// If the feed's newest usage is more than 4 days old the feed is broken: nothing is written and
-// Slack gets a warning, so a stale feed can't mark schools as stalled.
+// If the feed's newest usage is more than 4 school days old (holiday weeks don't count) the feed
+// is broken: nothing is written and Slack gets a warning, so a stale feed can't mark schools as
+// stalled. From mid-June to mid-August the job does nothing at all.
 //
 // USAGE_HEALTH_MODE=live writes to Close. Anything else (the default) is a dry run: it reads the
 // feed and Close, posts what it would do, and writes nothing and creates no fields.
@@ -80,6 +82,7 @@ export interface UsageHealthResult {
   window?: { from: string; to: string; holidayWeeks: number };
   latestUsageDate?: string;
   stale?: boolean;
+  paused?: boolean; // summer: the job did nothing
   error?: string;
   schools: number;
   labelCounts?: Record<HealthLabel, number>;
@@ -125,6 +128,10 @@ export async function runUsageHealth(opts: { forceDry?: boolean; now?: Date } = 
   };
   try {
     const t0 = Date.now();
+    if (isSummerPause(today)) {
+      console.log(`[usageHealth] summer pause (${today}): nothing read or written`);
+      return { ...result, paused: true };
+    }
     const since = schoolYearStart(today);
     const window = recentWindow(today);
     result.window = window;
@@ -136,7 +143,7 @@ export async function runUsageHealth(opts: { forceDry?: boolean; now?: Date } = 
     if (isFeedStale(body.latest_usage_date, today)) {
       result.stale = true;
       console.warn(`[usageHealth] stale feed: latest_usage_date=${result.latestUsageDate || '(none)'}, today=${today}; nothing written`);
-      await post(`:warning: *Usage health: the usage feed looks stale, so nothing was written to Close.* Its newest usage is ${result.latestUsageDate || 'missing'} and today is ${today} (more than 4 days old counts as broken).`);
+      await post(`:warning: *Usage health: the usage feed looks stale, so nothing was written to Close.* Its newest usage is ${result.latestUsageDate || 'missing'} and today is ${today} (more than 4 days old counts as broken, not counting holiday weeks).`);
       return result;
     }
     const schools = aggregateSchools(teachers, excluded);

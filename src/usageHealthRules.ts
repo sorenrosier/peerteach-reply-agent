@@ -73,11 +73,38 @@ export function recentWindow(today: string): { from: string; to: string; holiday
   return { from: addDays(baseFrom, -7 * holidayWeeks), to: today, holidayWeeks };
 }
 
+// Whether a day falls in a holiday week (Thanksgiving, Dec 25, Jan 1): no school is expected to
+// run a session then.
+export function inHolidayWeek(day: string): boolean {
+  const year = Number(day.slice(0, 4));
+  for (const y of [year - 1, year]) {
+    for (const holiday of [thanksgiving(y), `${y}-12-25`, `${y + 1}-01-01`]) {
+      const start = weekStart(holiday);
+      if (start <= day && day <= addDays(start, 6)) return true;
+    }
+  }
+  return false;
+}
+
 // A feed whose newest usage is more than 4 days old is broken (or missing its date): acting on
-// it would mark every school stalled.
+// it would mark every school stalled. Days inside a holiday week don't count towards the 4, or
+// the job would cry wolf every night of Thanksgiving week and winter break.
 export function isFeedStale(latestUsageDate: unknown, today: string): boolean {
   if (!isDate(latestUsageDate)) return true;
-  return toMs(today) - toMs(latestUsageDate.slice(0, 10)) > STALE_AFTER_DAYS * DAY_MS;
+  let quietDays = 0;
+  for (let day = addDays(latestUsageDate.slice(0, 10), 1); day <= today; day = addDays(day, 1)) {
+    if (!inHolidayWeek(day)) quietDays++;
+    if (quietDays > STALE_AFTER_DAYS) return true;
+  }
+  return false;
+}
+
+// Summer: from mid-June to mid-August there are no sessions to read. The job does nothing then,
+// so spring's labels stay on the leads instead of every school turning Stalled, and Slack stays
+// quiet. It starts again once the new school year is a couple of weeks old.
+export function isSummerPause(today: string): boolean {
+  const monthDay = today.slice(5, 10);
+  return monthDay >= '06-15' && monthDay <= '08-20';
 }
 
 // ---- usage -> schools ----

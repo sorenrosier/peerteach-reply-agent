@@ -8,6 +8,7 @@ import {
   healthLabel,
   isExcludedTeacher,
   isFeedStale,
+  isSummerPause,
   isWorse,
   normNces,
   parseExcludedIds,
@@ -225,8 +226,20 @@ async function main() {
 
   // ---- stale feed ----
   await check('stale feed: 4 days old is fine, 5 is stale, a missing date is stale', () => {
-    assert.strictEqual(isFeedStale('2026-11-28', '2026-12-02'), false);
-    assert.strictEqual(isFeedStale('2026-11-27', '2026-12-02'), true);
+    assert.strictEqual(isFeedStale('2026-10-16', '2026-10-20'), false);
+    assert.strictEqual(isFeedStale('2026-10-15', '2026-10-20'), true);
+    // Holiday weeks don't count. Last usage the Friday before Thanksgiving: the weekend is 2
+    // days, the holiday week 0, so Tuesday Dec 1 is day 4 and Wednesday Dec 2 is day 5.
+    assert.strictEqual(isFeedStale('2026-11-20', '2026-11-27'), false);
+    assert.strictEqual(isFeedStale('2026-11-20', '2026-12-01'), false);
+    assert.strictEqual(isFeedStale('2026-11-20', '2026-12-02'), true);
+    // Winter break: last usage Friday Dec 18, two holiday weeks, school back Monday Jan 4.
+    assert.strictEqual(isFeedStale('2026-12-18', '2027-01-05'), false);
+    assert.strictEqual(isFeedStale('2026-12-18', '2027-01-06'), true);
+    assert.strictEqual(isSummerPause('2027-06-14'), false);
+    assert.strictEqual(isSummerPause('2027-07-04'), true);
+    assert.strictEqual(isSummerPause('2027-08-20'), true);
+    assert.strictEqual(isSummerPause('2027-08-21'), false);
     assert.strictEqual(isFeedStale('2026-12-02T03:00:00Z', '2026-12-02'), false);
     assert.strictEqual(isFeedStale(undefined, '2026-12-02'), true);
     assert.strictEqual(isFeedStale('not a date', '2026-12-02'), true);
@@ -332,13 +345,20 @@ async function main() {
   await check('run: a stale feed writes nothing to Close and posts a warning (live and dry)', async () => {
     for (const mode of ['live', 'dry']) {
       process.env.USAGE_HEALTH_MODE = mode;
-      const f = fake({ fetchUsage: async () => feed('2026-11-27') });
+      const f = fake({ fetchUsage: async () => feed('2026-11-18') });
       const r = await runUsageHealth({ now: WED }, f.deps);
       assert.strictEqual(r.stale, true);
       assert.deepStrictEqual([f.updates.length, f.ensured.length, f.listed], [0, 0, 0]);
       assert.strictEqual(f.notes.length, 1);
-      assert.ok(f.notes[0].includes('stale') && f.notes[0].includes('2026-11-27'));
+      assert.ok(f.notes[0].includes('stale') && f.notes[0].includes('2026-11-18'));
     }
+  });
+  await check('run: in summer nothing is read, written or posted', async () => {
+    process.env.USAGE_HEALTH_MODE = 'live';
+    const f = fake();
+    const r = await runUsageHealth({ now: new Date('2027-07-06T12:30:00Z') }, f.deps);
+    assert.strictEqual(r.paused, true);
+    assert.deepStrictEqual([f.updates.length, f.ensured.length, f.listed, f.notes.length], [0, 0, 0, 0]);
   });
   await check('run, live: one failing lead is counted and reported, the rest still update', async () => {
     process.env.USAGE_HEALTH_MODE = 'live';
