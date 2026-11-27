@@ -1,5 +1,5 @@
 import assert from 'assert';
-import {
+import { chunkSections,
   FIELD,
   HealthLead,
   aggregateSchools,
@@ -310,12 +310,17 @@ async function main() {
     // 8 before over 2 weeks (from Oct 19) vs 3 weeks (from Oct 12).
     assert.strictEqual(slow(1, 9, '2026-10-19'), false);
     assert.strictEqual(slow(1, 9, '2026-10-12'), true);
+    // A school that only ever ran about 1 a week is not "slowing": 10 before over 9 weeks
+    // (from Aug 24) is 1.1 a week, under the 1.5 floor, even with 0.2 a week now.
+    assert.strictEqual(slow(1, 11, '2026-08-24'), false);
+    // 16 before over the same 9 weeks is 1.8 a week: a drop to 0.2 is news.
+    assert.strictEqual(slow(1, 17, '2026-08-24'), true);
   });
 
   // ---- weekly digest: names ----
   await check('digest: all-caps feed names are title-cased, abbreviations and short consonant tokens kept', () => {
     assert.strictEqual(displayName('SCOTT VALLEY JR HIGH'), 'Scott Valley JR High');
-    assert.strictEqual(displayName('CORONADO EL'), 'Coronado EL');
+    assert.strictEqual(displayName('CORONADO EL'), 'Coronado El');
     assert.strictEqual(displayName('G R HAMPTON ELEMENTARY SCHOOL'), 'G R Hampton Elementary School');
     assert.strictEqual(displayName('LINCOLN K-8'), 'Lincoln K-8');
     assert.strictEqual(displayName('KIPP DC PCS'), 'Kipp DC PCS');
@@ -335,6 +340,14 @@ async function main() {
   const url = (id: string) => `https://app.close.com/lead/${id}/`;
   const opp = (leadId: string, statusLabel: string, dateUpdated: string): ActiveOpportunity => ({ leadId, statusLabel, dateUpdated });
 
+  await check('chunkSections: whole sections per message, lines only for an oversized one', () => {
+    const a = 'A\n' + 'x'.repeat(50), b = 'B\n' + 'y'.repeat(50), c = 'C\n' + 'z'.repeat(50);
+    assert.deepStrictEqual(chunkSections([a, b, c].join('\n\n'), 120), [`${a}\n\n${b}`, c]);
+    const big = Array.from({ length: 6 }, (_, i) => `line ${i} ${'q'.repeat(30)}`).join('\n');
+    const parts = chunkSections(`${a}\n\n${big}`, 120);
+    assert.strictEqual(parts[0], a);
+    assert.ok(parts.slice(1).every((p) => p.length <= 120) && parts.slice(1).join('\n') === big);
+  });
   await check('digest: section membership (an On track school can be slowing down; new, top 3, never)', () => {
     const s = digestSections({
       today: TODAY, leads: [], opportunities: [],
@@ -429,7 +442,8 @@ async function main() {
       '',
       '*Going well*',
       '• *Bivins El* (Amarillo ISD): 20 sessions in 5 weeks, 3 of 4 teachers active.',
-      '• *Northeast Middle*: 6 sessions, 1 of 1 teacher active. *G R Hampton*: 4 sessions, 1 of 1 teacher active.',
+      '• *Northeast Middle*: 6 sessions, 1 of 1 teacher active.',
+      '• *G R Hampton*: 4 sessions, 1 of 1 teacher active.',
       '• New: *New Two* and *New Three* ran 4 and 2 in their first weeks.',
       '• 4 schools on track overall.',
       '',
@@ -527,7 +541,8 @@ async function main() {
     '',
     '*Going well*',
     '• *No Lead Elementary*: 6 sessions in 5 weeks, 1 of 1 teacher active.',
-    '• *Bollinger Canyon Elementary* (San Ramon Valley Unified): 4 sessions, 2 of 2 teachers active. *Unchanged School* (San Ramon Valley Unified): 2 sessions, 1 of 1 teacher active.',
+    '• *Bollinger Canyon Elementary* (San Ramon Valley Unified): 4 sessions, 2 of 2 teachers active.',
+    '• *Unchanged School* (San Ramon Valley Unified): 2 sessions, 1 of 1 teacher active.',
     '• 2 schools on track overall.',
     '',
     'Not in Close yet: No Lead Elementary. Create a lead so they show up here.',

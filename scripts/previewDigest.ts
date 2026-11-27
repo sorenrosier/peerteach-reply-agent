@@ -1,7 +1,7 @@
 import fs from 'fs';
 import { closeLeadUrl } from '../src/closeCrm';
 import { buildDigest, digestSections } from '../src/healthDigestRules';
-import { HealthLead, aggregateSchools, chunkLines, parseExcludedIds, recentWindow, weekStart } from '../src/usageHealthRules';
+import { HealthLead, aggregateSchools, chunkSections, parseExcludedIds, recentWindow, weekStart } from '../src/usageHealthRules';
 
 // Prints the Monday school health digest exactly as the job would post it, from a saved feed. No
 // network. Each Slack message is printed in turn (a long digest is split on lines).
@@ -48,7 +48,7 @@ const text = buildDigest({ schools, leads, opportunities, today, weekOf, leadUrl
 if (!text) {
   console.error('[preview] every section is empty: nothing would be posted');
 } else {
-  const parts = chunkLines(text);
+  const parts = chunkSections(text);
   parts.forEach((p, i) => {
     if (parts.length > 1) console.log(`----- message ${i + 1} of ${parts.length} -----`);
     console.log(p);

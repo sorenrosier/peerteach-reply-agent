@@ -333,6 +333,24 @@ export function planHealth(schools: Map<string, SchoolUsage>, leads: HealthLead[
 
 // ---- Slack ----
 
+// Like chunkLines, but keeps each blank-line-separated section whole when it can, so a long
+// digest is split between sections rather than in the middle of one.
+export function chunkSections(text: string, max = 2800): string[] {
+  const out: string[] = [];
+  let cur = '';
+  for (const section of text.split('\n\n')) {
+    if (section.length > max) {
+      if (cur) { out.push(cur); cur = ''; }
+      out.push(...chunkLines(section, max));
+    } else if (cur && cur.length + 2 + section.length > max) {
+      out.push(cur);
+      cur = section;
+    } else cur = cur ? `${cur}\n\n${section}` : section;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
 // Slack caps a section at 3,000 characters: long lists go out as several messages, split on lines.
 export function chunkLines(text: string, max = 2800): string[] {
   const out: string[] = [];

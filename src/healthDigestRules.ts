@@ -7,7 +7,8 @@
 // listed, with a link to its Close lead.
 // - Stopped: Stalled (3+ sessions this year, none in the window).
 // - Slowing down: sessions in the window, but under half the school's own usual pace (8+ sessions
-//   before the window over 3+ school weeks). On track schools can be slowing down too.
+//   before the window over 3+ school weeks, at a usual pace of at least 1.5 a week, so a school
+//   that only ever ran one a week is not flagged). On track schools can be slowing down too.
 // - Going well: the 3 busiest schools, new schools with 2+ sessions, and the On track count.
 // - Never got going: Silent (1 or 2 sessions this year, none in the window).
 // Matched schools carry the stage of the active deal on their lead, else on their district lead.
@@ -19,6 +20,8 @@ import { HealthLabel, HealthLead, SchoolUsage, addDays, chooseSchoolLeads, healt
 export const SLOWING_MIN_BEFORE_SESSIONS = 8;
 export const SLOWING_MIN_BEFORE_WEEKS = 3;
 export const SLOWING_RATIO = 0.5; // slowing down: recent pace under half the usual pace
+// A usual pace this low is already "about 1 a week": a drop from it is not news.
+export const SLOWING_MIN_USUAL_PACE = 1.5;
 export const TOP_SCHOOLS = 3;
 export const NEW_MIN_SESSIONS = 2;
 export const NEW_NAMED = 4;
@@ -59,7 +62,7 @@ export function schoolPaces(s: Pick<SchoolUsage, 'sessionsWindow' | 'sessionsYea
 }
 
 export function isSlowing(s: Pick<SchoolUsage, 'sessionsWindow'>, p: Paces): boolean {
-  return s.sessionsWindow > 0 && p.before >= SLOWING_MIN_BEFORE_SESSIONS && p.beforeWeeks >= SLOWING_MIN_BEFORE_WEEKS && p.recent < p.usual * SLOWING_RATIO;
+  return s.sessionsWindow > 0 && p.before >= SLOWING_MIN_BEFORE_SESSIONS && p.beforeWeeks >= SLOWING_MIN_BEFORE_WEEKS && p.usual >= SLOWING_MIN_USUAL_PACE && p.recent < p.usual * SLOWING_RATIO;
 }
 
 // "about 5", "about 1" or "under 1" (add " a week" where it reads well). Never a decimal.
@@ -71,7 +74,7 @@ export function pacePhrase(perWeek: number): string {
 
 // ---- names ----
 
-const KEEP_UPPER = ['PCS', 'ISD', 'K-8', 'EL'];
+const KEEP_UPPER = ['PCS', 'ISD', 'K-8'];
 
 // Feed names that are all capitals, title-cased: "SCOTT VALLEY JR HIGH" -> "Scott Valley JR High".
 // Short all-consonant tokens (JR, MS, G) and known abbreviations stay as they are. Anything with a
@@ -237,7 +240,7 @@ export function buildDigest(input: DigestInput & { weekOf: string; leadUrl: (lea
   const well: string[] = [];
   const [first, ...rest] = s.top;
   if (first) well.push(`• ${bold(first)}: ${plural(first.usage.sessionsWindow, 'session')} in ${plural(s.recentWeeks, 'week')}, ${teachersActive(first.usage)}.`);
-  if (rest.length) well.push(`• ${rest.map((d) => `${bold(d)}: ${plural(d.usage.sessionsWindow, 'session')}, ${teachersActive(d.usage)}.`).join(' ')}`);
+  for (const d of rest) well.push(`• ${bold(d)}: ${plural(d.usage.sessionsWindow, 'session')}, ${teachersActive(d.usage)}.`);
   if (s.fresh.length) {
     const shown = s.fresh.slice(0, NEW_NAMED);
     const counts = shown.map((d) => d.usage.sessionsYear);

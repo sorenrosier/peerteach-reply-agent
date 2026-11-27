@@ -10,6 +10,7 @@ import {
   LeadUpdate,
   aggregateSchools,
   chunkLines,
+  chunkSections,
   isFeedStale,
   isSummerPause,
   pacificDate,
@@ -140,13 +141,13 @@ export async function runUsageHealth(opts: { forceDry?: boolean; forceDigest?: b
   const now = opts.now ?? new Date();
   const today = now.toISOString().slice(0, 10);
   const result: UsageHealthResult = { ok: true, mode: live ? 'live' : 'dry', today, schools: 0, matched: 0, unmatched: 0, duplicates: 0, districtRollups: 0, leadsToUpdate: 0, updated: 0, failed: 0, deferred: 0 };
-  const send = async (text: string, how: (part: string) => Promise<void>) => {
-    for (const part of chunkLines(text)) {
+  const send = async (text: string, how: (part: string) => Promise<void>, split = chunkLines) => {
+    for (const part of split(text)) {
       try { await how(part); } catch (err) { console.warn('[usageHealth] Slack post failed:', closeErrorText(err)); }
     }
   };
   const post = (text: string) => send(text, (part) => deps.postNote(part));
-  const report = (text: string) => send(text, (part) => deps.postReport(part));
+  const report = (text: string) => send(text, (part) => deps.postReport(part), chunkSections);
   try {
     const t0 = Date.now();
     if (isSummerPause(today)) {
